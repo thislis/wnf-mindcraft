@@ -10,6 +10,8 @@ export class SelfPrompter {
         this.prompt = '';
         this.idle_time = 0;
         this.cooldown = 2000;
+        this.managed_retry_cooldown = 5000;
+        this.managed_retry_poll_interval = 50;
     }
 
     start(prompt) {
@@ -69,6 +71,15 @@ export class SelfPrompter {
             if (!used_command) {
                 no_command_count++;
                 if (no_command_count >= MAX_NO_COMMAND) {
+                    if (this.agent.firewater?.isRunning()) {
+                        console.warn(
+                            `Firewater goal produced no command ${MAX_NO_COMMAND} times; ` +
+                            'keeping the server-managed goal active and retrying with backoff.'
+                        );
+                        no_command_count = 0;
+                        await this._waitForManagedRetry();
+                        continue;
+                    }
                     let out = `Agent did not use command in the last ${MAX_NO_COMMAND} auto-prompts. Stopping auto-prompting.`;
                     this.agent.openChat(out);
                     console.warn(out);
@@ -107,28 +118,53 @@ export class SelfPrompter {
 
     async stopLoop() {
         // you can call this without await if you don't need to wait for it to finish
-        if (this.interrupt)
-            return;
-        console.log('stopping self-prompt loop')
+        if (!this.interrupt)
+            console.log('stopping self-prompt loop')
         this.interrupt = true;
         while (this.loop_active) {
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 50));
         }
         this.interrupt = false;
+    }
+
+    async _waitForManagedRetry() {
+        const deadline = Date.now() + this.managed_retry_cooldown;
+        while (!this.interrupt) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) return;
+            await new Promise(r => setTimeout(
+                r,
+                Math.min(remaining, this.managed_retry_poll_interval)
+            ));
+        }
+    }
+
+    async waitForLoopStop() {
+        while (this.loop_active) {
+            await new Promise(r => setTimeout(r, 50));
+        }
     }
 
     async stop(stop_action=true) {
         this.interrupt = true;
         if (stop_action)
             await this.agent.actions.stop();
-        this.stopLoop();
+        await this.stopLoop();
         this.state = STOPPED;
     }
 
     async pause() {
         this.interrupt = true;
         await this.agent.actions.stop();
-        this.stopLoop();
+        await this.stopLoop();
+        this.state = PAUSED;
+    }
+
+    pauseAfterCurrentTurn() {
+        // A command executed by the self-prompt loop cannot await pause(): the
+        // loop is itself waiting for that command to return. Mark the loop for
+        // interruption and let the current command finish naturally.
+        this.interrupt = true;
         this.state = PAUSED;
     }
 

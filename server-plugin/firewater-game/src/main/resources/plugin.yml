@@ -1,0 +1,15 @@
+name: FirewaterGame
+version: ${version}
+main: com.isttech.firewater.FirewaterPlugin
+api-version: '1.21'
+description: Server-authoritative Fire and Water cooperative stages
+authors: [IST-Tech]
+commands:
+  fw:
+    description: Configure and run Firewater stages
+    usage: /fw help
+    permission: firewater.admin
+permissions:
+  firewater.admin:
+    description: Configure and run Firewater stages
+    default: op

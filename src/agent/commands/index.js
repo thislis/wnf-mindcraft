@@ -10,6 +10,23 @@ for (let command of commandList) {
     commandMap[command.name] = command;
 }
 
+export const FIREWATER_COMMAND_ALLOWLIST = new Set([
+    '!stop',
+    '!stats',
+    '!nearbyBlocks',
+    '!entities',
+    '!observeFirewater',
+    '!exploreFirewater',
+    '!activateBlockAt',
+    '!standOnBlock',
+    '!startConversation',
+    '!endConversation',
+]);
+
+export function isFirewaterCommandAllowed(agent, commandName) {
+    return !agent.firewater?.isRunning() || FIREWATER_COMMAND_ALLOWLIST.has(commandName);
+}
+
 export function getCommand(name) {
     return commandMap[name];
 }
@@ -215,6 +232,10 @@ export async function executeCommand(agent, message) {
         return parsed; //The command was incorrectly formatted or an invalid input was given.
     else {
         console.log('parsed command:', parsed);
+        if (!isFirewaterCommandAllowed(agent, parsed.commandName)) {
+            return `Command ${parsed.commandName} is disabled during an active Firewater stage. ` +
+                'Use only observation, exact observed-coordinate interaction, planning, or emergency stop commands.';
+        }
         const command = getCommand(parsed.commandName);
         let numArgs = 0;
         if (parsed.args) {
@@ -245,6 +266,9 @@ export function getCommandDocs(agent) {
     Do not use codeblocks. Use double quotes for strings. Only use one command in each response, trailing commands and comments will be ignored.\n`;
     for (let command of commandList) {
         if (agent.blocked_actions.includes(command.name)) {
+            continue;
+        }
+        if (!isFirewaterCommandAllowed(agent, command.name)) {
             continue;
         }
         docs += command.name + ': ' + command.description + '\n';

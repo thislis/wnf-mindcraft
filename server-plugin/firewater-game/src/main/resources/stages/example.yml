@@ -1,0 +1,22 @@
+# Copy this file into plugins/FirewaterGame/stages and configure it with /fw.
+schema-version: 1
+id: example
+world: world
+enabled: false
+goal: "Both players must reach their matching exits."
+bot-brief: "Coordinate switches and use only your safe liquid route."
+bounds:
+  min: { x: 0, y: 0, z: 0 }
+  max: { x: 20, y: 20, z: 20 }
+start:
+  # The operator panel may be outside the play bounds.
+  trigger: { type: button, x: -2, y: 2, z: 1 }
+  wade: { x: 2.5, y: 2.0, z: 2.5, yaw: 0.0, pitch: 0.0 }
+  ember: { x: 4.5, y: 2.0, z: 2.5, yaw: 0.0, pitch: 0.0 }
+finish:
+  hold-ticks: 10
+  wade: { x: 18, y: 1, z: 17, material: light_blue_glazed_terracotta }
+  ember: { x: 18, y: 1, z: 19, material: orange_glazed_terracotta }
+walls: {}
+hazards:
+  poison-materials: [lime_carpet, green_stained_glass, green_concrete]

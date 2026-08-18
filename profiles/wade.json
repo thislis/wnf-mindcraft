@@ -1,8 +1,26 @@
 {
     "name": "Wade",
-    "model": "gemini-flash-latest",
+    "model": "openai-codex/gpt-5.5",
+    "vision_model": "openai-codex/gpt-5.5",
+    "firewater_role": "wade",
+    "firewater_partner": "Ember",
+    "firewater_conversation_message_limit": 4,
     "prompt_files": {
         "conversing": "./prompts/wade.conversing.md",
-        "coding": "./prompts/wade.coding.md"
+        "coding": "./prompts/wade.coding.md",
+        "bot_responder": "./prompts/firewater.bot_responder.md",
+        "image_analysis": "./prompts/firewater.image_analysis.md"
+    },
+    "modes": {
+        "self_preservation": false,
+        "unstuck": true,
+        "cowardice": false,
+        "self_defense": false,
+        "hunting": false,
+        "item_collecting": false,
+        "torch_placing": false,
+        "elbow_room": false,
+        "idle_staring": false,
+        "cheat": false
     }
 }

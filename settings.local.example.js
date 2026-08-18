@@ -6,6 +6,7 @@ export default {
     minecraft_version: "1.21.6",
     auth: "offline",
     init_message: null,
+    allow_vision: true,
 
     profiles: [
         "./profiles/ember.json",

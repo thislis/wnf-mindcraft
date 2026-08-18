@@ -172,6 +172,12 @@ export class Prompter {
 
     async replaceStrings(prompt, messages, examples=null, to_summarize=[], last_goals=null) {
         prompt = prompt.replaceAll('$NAME', this.agent.name);
+        if (prompt.includes('$FIREWATER_PARTNER')) {
+            const partner = this.agent.firewater?.getPartnerName?.()
+                || this.profile.firewater_partner
+                || 'your Firewater partner';
+            prompt = prompt.replaceAll('$FIREWATER_PARTNER', partner);
+        }
 
         if (prompt.includes('$STATS')) {
             let stats = await getCommand('!stats').perform(this.agent) + '\n';

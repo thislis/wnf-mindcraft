@@ -1,0 +1,12 @@
+players:
+  wade: Wade
+  ember: Ember
+
+# These blocks are treated as poison when touched at the feet or immediately below.
+default-poison-materials:
+  - lime_carpet
+  - green_stained_glass
+  - green_concrete
+
+hazard-check-period-ticks: 2
+max-bot-message-length: 240

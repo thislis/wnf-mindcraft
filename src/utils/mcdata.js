@@ -8,7 +8,11 @@ import { plugin as collectblock } from 'mineflayer-collectblock';
 import { plugin as autoEat } from 'mineflayer-auto-eat';
 import plugin from 'mineflayer-armor-manager';
 const armorManager = plugin;
-let mc_version = settings.minecraft_version;
+// Agent settings arrive from MindServer after this module is imported. Reading
+// the version at module evaluation time therefore captured `undefined` and made
+// Mineflayer auto-select its newest protocol instead of the configured server
+// version. Resolve it when the bot is actually created.
+let mc_version = null;
 let mcdata = null;
 let Item = null;
 
@@ -53,6 +57,7 @@ export const WOOL_COLORS = [
 
 
 export function initBot(username) {
+    mc_version = settings.minecraft_version;
     const options = {
         username: username,
         host: settings.host,
