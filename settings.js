@@ -1,6 +1,6 @@
 const settings = {
     "minecraft_version": "auto", // or specific version like "1.21.6"
-    "host": "127.0.0.1", // or "localhost", "your.ip.address.here"
+    "host": "wnf.chogw.uk", // or "localhost", "your.ip.address.here"
     "port": 55916, // set to -1 to automatically scan for open ports
     "auth": "offline", // or "microsoft"
 
@@ -10,7 +10,7 @@ const settings = {
     
     "base_profile": "assistant", // survival, assistant, creative, or god_mode
     "profiles": [
-        "./andy.json",
+        //"./andy.json",
         // "./profiles/gpt.json",
         // "./profiles/claude.json",
         // "./profiles/gemini.json",
@@ -21,6 +21,8 @@ const settings = {
         // "./profiles/deepseek.json",
         // "./profiles/mercury.json",
         // "./profiles/andy-4.json", // Supports up to 75 messages!
+        "./profiles/wade.json",
+        "./profiles/amber.json"
 
         // using more than 1 profile requires you to /msg each bot indivually
         // individual profiles override values from the base profile

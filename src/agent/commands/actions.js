@@ -1,6 +1,8 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
 import convoManager from '../conversation.js';
+import { Vec3 } from 'vec3';
+import { canSeeFirewaterTarget } from '../vision/vision_interpreter.js';
 
 
 function runAsAction (actionFn, resume = false, timeout = -1) {
@@ -20,9 +22,37 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
         if (code_return.interrupted && !code_return.timedout)
             return;
         return code_return.message;
-    }
+    };
 
     return wrappedAction;
+}
+
+export function validateObservedCoordinateTarget(agent, x, y, z, action, options = {}) {
+    const target = agent.vision_interpreter?.getRecentObservedTarget(x, y, z);
+    const validationError = agent.firewater?.validateObservedTarget(target, action);
+    if (validationError) return { error: validationError };
+
+    const block = agent.bot.blockAt(new Vec3(x, y, z));
+    if (!block)
+        return { error: `Target block (${x}, ${y}, ${z}) is not loaded.` };
+    if (block.name !== target.name) {
+        return {
+            error: `Observed target changed from ${target.name} to ${block.name}. Run !observeFirewater again.`,
+        };
+    }
+    const maxDistance = options.maxDistance === undefined ? 16 : options.maxDistance;
+    if (Number.isFinite(maxDistance) && agent.bot.entity.position.distanceTo(block.position) > maxDistance) {
+        return {
+            error: `Target ${block.name} at (${x}, ${y}, ${z}) is more than ${maxDistance} blocks away. Run !observeFirewater from a closer position.`,
+        };
+    }
+    const requireLineOfSight = options.requireLineOfSight !== false;
+    if (requireLineOfSight && !canSeeFirewaterTarget(agent.bot, block, target.kind)) {
+        return {
+            error: `Target ${block.name} at (${x}, ${y}, ${z}) is no longer in line of sight. Run !observeFirewater again.`,
+        };
+    }
+    return { target, block };
 }
 
 export const actionsList = [
@@ -367,6 +397,9 @@ export const actionsList = [
             'selfPrompt': { type: 'string', description: 'The goal prompt.' },
         },
         perform: async function (agent, prompt) {
+            if (agent.firewater?.isRunning()) {
+                return 'The active Firewater goal is server-managed. Keep the existing goal until FWG CLEAR or ABORT.';
+            }
             if (convoManager.inConversation()) {
                 agent.self_prompter.setPromptPaused(prompt);
             }
@@ -379,7 +412,10 @@ export const actionsList = [
         name: '!endGoal',
         description: 'Call when you have accomplished your goal. It will stop self-prompting and the current action. ',
         perform: async function (agent) {
-            agent.self_prompter.stop();
+            if (agent.firewater?.isRunning()) {
+                return 'The active Firewater goal can end only when the server sends FWG CLEAR or ABORT.';
+            }
+            await agent.self_prompter.stop();
             return 'Self-prompting stopped.';
         }
     },
@@ -413,11 +449,24 @@ export const actionsList = [
         perform: async function (agent, player_name, message) {
             if (!convoManager.isOtherAgent(player_name))
                 return player_name + ' is not a bot, cannot start conversation.';
+            if (agent.firewater?.isRunning() && !agent.firewater.canInitiateConversation(player_name)) {
+                return `Only the server-designated lead may initiate the active Firewater exchange with ${agent.firewater.getPartnerName()}.`;
+            }
             if (convoManager.inConversation() && !convoManager.inConversation(player_name)) 
                 convoManager.forceEndCurrentConversation();
-            else if (convoManager.inConversation(player_name))
-                agent.history.add('system', 'You are already in conversation with ' + player_name + '. Don\'t use this command to talk to them.');
-            convoManager.startConversation(player_name, message);
+            else if (convoManager.inConversation(player_name)) {
+                await agent.history.add('system', 'You are already in conversation with ' + player_name + '. Don\'t use this command to talk to them.');
+                return `Already in conversation with ${player_name}.`;
+            }
+            const conversationOptions = {
+                ...(agent.firewater?.getConversationOptions() || {}),
+                pauseAfterCurrentTurn: agent.self_prompter.isActive(),
+            };
+            await convoManager.startConversation(
+                player_name,
+                message,
+                conversationOptions
+            );
         }
     },
     {
@@ -432,6 +481,119 @@ export const actionsList = [
             convoManager.endConversation(player_name);
             return `Converstaion with ${player_name} ended.`;
         }
+    },
+    {
+        name: '!observeFirewater',
+        description: 'Capture front/right/back/left stage views and list exact visible targets within 16 blocks. Coordinate permissions last 30 seconds.',
+        perform: async function(agent) {
+            let result = '';
+            const actionResult = await agent.actions.runAction('action:observeFirewater', async () => {
+                result = await agent.vision_interpreter.observeFirewater();
+            });
+            return result || actionResult.message;
+        }
+    },
+    {
+        name: '!exploreFirewater',
+        description: 'Move to a different viewpoint along a role-safe path inside the active stage, then observe again. Example: !exploreFirewater(5)',
+        params: {
+            'distance': {
+                type: 'float',
+                description: 'Minimum distance from the current viewpoint, from 2 through 8 blocks.',
+                domain: [2, 8, '[]'],
+            },
+        },
+        perform: runAsAction(async (agent, distance) => {
+            if (!agent.firewater?.isRunning()) {
+                skills.log(agent.bot, 'Firewater exploration is available only during an active stage.');
+                return;
+            }
+            const bounds = agent.prompter?.profile?.firewater_active_bounds;
+            if (!bounds?.min || !bounds?.max) {
+                skills.log(agent.bot, 'Cannot explore safely because the active Firewater stage has no bounds.');
+                return;
+            }
+            await skills.moveAway(agent.bot, distance);
+            skills.log(agent.bot, 'Reached a different Firewater viewpoint. Run !observeFirewater now.');
+        })
+    },
+    {
+        name: '!activateBlockAt',
+        description: 'Activate an exact lever or button coordinate from a Firewater observation made in the last 30 seconds.',
+        params: {
+            'x': { type: 'int', description: 'Observed block x coordinate.' },
+            'y': { type: 'int', description: 'Observed block y coordinate.', domain: [-64, 320] },
+            'z': { type: 'int', description: 'Observed block z coordinate.' }
+        },
+        perform: runAsAction(async (agent, x, y, z) => {
+            let authorized = validateObservedCoordinateTarget(agent, x, y, z, 'activate');
+            if (authorized.error) {
+                skills.log(agent.bot, authorized.error);
+                return;
+            }
+
+            const reached = await skills.goToPosition(agent.bot, x, y, z, 2);
+            if (!reached) return;
+            authorized = validateObservedCoordinateTarget(agent, x, y, z, 'activate', { maxDistance: 5 });
+            if (authorized.error) {
+                skills.log(agent.bot, authorized.error);
+                return;
+            }
+            await agent.bot.lookAt(authorized.block.position.offset(0.5, 0.5, 0.5), true);
+            await agent.bot.activateBlock(authorized.block);
+            skills.log(agent.bot, `Activated ${authorized.block.name} at (${x}, ${y}, ${z}). Re-observe before another coordinate action.`);
+            agent.vision_interpreter.clearFirewaterObservations();
+        })
+    },
+    {
+        name: '!standOnBlock',
+        description: 'Stand on an exact pressure plate or your own exit from a Firewater observation made in the last 30 seconds.',
+        params: {
+            'x': { type: 'int', description: 'Observed block x coordinate.' },
+            'y': { type: 'int', description: 'Observed block y coordinate.', domain: [-64, 320] },
+            'z': { type: 'int', description: 'Observed block z coordinate.' }
+        },
+        perform: runAsAction(async (agent, x, y, z) => {
+            const authorized = validateObservedCoordinateTarget(agent, x, y, z, 'stand');
+            if (authorized.error) {
+                skills.log(agent.bot, authorized.error);
+                return;
+            }
+
+            const isPressurePlate = authorized.target.kind === 'pressure_plate';
+            const standingY = isPressurePlate ? y : y + 1;
+            const reached = await skills.goToPosition(agent.bot, x + 0.5, standingY, z + 0.5, 0);
+            if (!reached) {
+                skills.log(agent.bot, `Could not reach ${authorized.block.name} at (${x}, ${y}, ${z}) by a safe path.`);
+                return;
+            }
+            // A floor target may no longer be ray-visible once the bot is on
+            // top of it. Recheck freshness, role/bounds, and current block;
+            // exact feet/below position is the post-arrival spatial proof.
+            const stillAuthorized = validateObservedCoordinateTarget(
+                agent,
+                x,
+                y,
+                z,
+                'stand',
+                { maxDistance: false, requireLineOfSight: false }
+            );
+            if (stillAuthorized.error) {
+                skills.log(agent.bot, stillAuthorized.error);
+                return;
+            }
+            const feet = agent.bot.entity.position.floored();
+            const below = feet.offset(0, -1, 0);
+            const targetPosition = new Vec3(x, y, z);
+            const standingExactly = isPressurePlate
+                ? feet.equals(targetPosition)
+                : below.equals(targetPosition);
+            if (!standingExactly) {
+                skills.log(agent.bot, `Could not stand exactly on ${stillAuthorized.block.name} at (${x}, ${y}, ${z}).`);
+                return;
+            }
+            skills.log(agent.bot, `Standing on ${stillAuthorized.block.name} at (${x}, ${y}, ${z}). Hold position unless the plan changes.`);
+        })
     },
     {
         name: '!lookAtPlayer',
@@ -477,7 +639,7 @@ export const actionsList = [
         description: 'Digs down a specified distance. Will stop if it reaches lava, water, or a fall of >=4 blocks below the bot.',
         params: {'distance': { type: 'int', description: 'Distance to dig down', domain: [1, Number.MAX_SAFE_INTEGER] }},
         perform: runAsAction(async (agent, distance) => {
-            await skills.digDown(agent.bot, distance)
+            await skills.digDown(agent.bot, distance);
         })
     },
     {

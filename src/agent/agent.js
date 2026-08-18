@@ -10,6 +10,7 @@ import { NPCContoller } from './npc/controller.js';
 import { MemoryBank } from './memory_bank.js';
 import { SelfPrompter } from './self_prompter.js';
 import convoManager from './conversation.js';
+import { FirewaterSession, extractFirewaterMessage } from './firewater_session.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
 import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
@@ -45,6 +46,7 @@ export class Agent {
         this.memory_bank = new MemoryBank();
         this.self_prompter = new SelfPrompter(this);
         convoManager.initAgent(this);
+        this.firewater = new FirewaterSession(this, { ready: false });
         await this.prompter.initExamples();
 
         // load mem first before doing task
@@ -64,6 +66,7 @@ export class Agent {
 
         console.log(this.name, 'logging into minecraft...');
         this.bot = initBot(this.name);
+        this._installEarlyFirewaterEventHandlers();
         
         // Connection Handler
         const onDisconnect = (event, reason) => {
@@ -115,11 +118,12 @@ export class Agent {
 
                 // wait for a bit so stats are not undefined
                 await new Promise((resolve) => setTimeout(resolve, 1000));
+                this.firewater.markReady();
                 
                 console.log(`${this.name} spawned.`);
                 this.clearBotLogs();
               
-                this._setupEventHandlers(save_data, init_message);
+                await this._setupEventHandlers(save_data, init_message);
                 this.startEvents();
               
                 if (!load_mem) {
@@ -144,6 +148,24 @@ export class Agent {
         });
     }
 
+    _installEarlyFirewaterEventHandlers() {
+        const safelyQueue = (source, message) => {
+            if (!extractFirewaterMessage(message)) return;
+            this.firewater.handleRawMessage(source, message).catch(error => {
+                console.error(`${this.name} could not queue an early Firewater message:`, error);
+            });
+        };
+
+        this.bot.on('whisper', safelyQueue);
+        this.bot.on('messagestr', (message, _position, jsonMsg) => {
+            const translation = String(jsonMsg?.translate || '').toLowerCase();
+            const incomingWhisper = translation.includes('whispers to you')
+                || translation.includes('commands.message.display.incoming');
+            if (incomingWhisper)
+                safelyQueue('system', message);
+        });
+    }
+
     async _setupEventHandlers(save_data, init_message) {
         const ignore_messages = [
             "Set own game mode to",
@@ -157,8 +179,11 @@ export class Agent {
         const respondFunc = async (username, message) => {
             if (message === "") return;
             if (username === this.name) return;
-            if (settings.only_chat_with.length > 0 && !settings.only_chat_with.includes(username)) return;
             try {
+                // The early listener owns every FWG packet so START cannot be
+                // lost while spawn-time initialization is still running.
+                if (this.firewater.isEnabled() && extractFirewaterMessage(message)) return;
+                if (settings.only_chat_with.length > 0 && !settings.only_chat_with.includes(username)) return;
                 if (ignore_messages.some((m) => message.startsWith(m))) return;
 
                 this.shut_up = false;
@@ -166,7 +191,7 @@ export class Agent {
                 console.log(this.name, 'received message from', username, ':', message);
 
                 if (convoManager.isOtherAgent(username)) {
-                    console.warn('received whisper from other bot??')
+                    console.warn('received whisper from other bot??');
                 }
                 else {
                     let translation = await handleEnglishTranslation(message);
@@ -175,7 +200,7 @@ export class Agent {
             } catch (error) {
                 console.error('Error handling message:', error);
             }
-        }
+        };
 
 		this.respondFunc = respondFunc;
 
@@ -213,8 +238,8 @@ export class Agent {
         else if (init_message) {
             await this.handleMessage('system', init_message, 2);
         }
-        else {
-            this.openChat("Hello world! I am "+this.name);
+        else if (!this.firewater.isEnabled()) {
+            await this.openChat("Hello world! I am "+this.name);
         }
     }
 
@@ -322,7 +347,7 @@ export class Agent {
             console.log(`${this.name} full response to ${source}: ""${res}""`);
 
             if (res.trim().length === 0) {
-                console.warn('no response')
+                console.warn('no response');
                 break; // empty response ends loop
             }
 
@@ -334,7 +359,7 @@ export class Agent {
                 
                 if (!commandExists(command_name)) {
                     this.history.add('system', `Command ${command_name} does not exist.`);
-                    console.warn('Agent hallucinated command:', command_name)
+                    console.warn('Agent hallucinated command:', command_name);
                     continue;
                 }
 
@@ -396,7 +421,7 @@ export class Agent {
         }
         else {
             // otherwise, use open chat
-            this.openChat(message);
+            await this.openChat(message);
             // note that to_player could be another bot, but if we get here the conversation has ended
         }
     }
@@ -472,8 +497,8 @@ export class Agent {
                 this.cleanKill(msg);
             }
         });
-        this.bot.on('messagestr', async (message, _, jsonMsg) => {
-            if (jsonMsg.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
+        this.bot.on('messagestr', async (message, _position, jsonMsg) => {
+            if (jsonMsg?.translate && jsonMsg.translate.startsWith('death') && message.startsWith(this.name)) {
                 console.log('Agent died: ', message);
                 let death_pos = this.bot.entity.position;
                 this.memory_bank.rememberPlace('last_death_position', death_pos.x, death_pos.y, death_pos.z);
@@ -482,7 +507,15 @@ export class Agent {
                     death_pos_text = `x: ${death_pos.x.toFixed(2)}, y: ${death_pos.y.toFixed(2)}, z: ${death_pos.z.toFixed(2)}`;
                 }
                 let dimention = this.bot.game.dimension;
-                this.handleMessage('system', `You died at position ${death_pos_text || "unknown"} in the ${dimention} dimension with the final message: '${message}'. Your place of death is saved as 'last_death_position' if you want to return. Previous actions were stopped and you have respawned.`);
+                if (this.firewater.isRunning()) {
+                    await this.history.add(
+                        'system',
+                        `FIREWATER DEATH: ${message}. Await the authoritative FWG RESET before replanning.`
+                    );
+                    await this.history.save();
+                    return;
+                }
+                await this.handleMessage('system', `You died at position ${death_pos_text || "unknown"} in the ${dimention} dimension with the final message: '${message}'. Your place of death is saved as 'last_death_position' if you want to return. Previous actions were stopped and you have respawned.`);
             }
         });
         this.bot.on('idle', () => {
