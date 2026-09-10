@@ -88,7 +88,9 @@ public final class WallService {
 
     private boolean isActive(World world, TriggerDefinition trigger, Map<Role, Player> players) {
         if (trigger.type() == TriggerType.PAD) {
-            for (Player player : players.values()) {
+            for (Map.Entry<Role, Player> entry : players.entrySet()) {
+                if (!trigger.allows(entry.getKey())) continue;
+                Player player = entry.getValue();
                 if (player == null || !player.isOnline() || player.isDead() || player.getWorld() != world) continue;
                 BlockPosition feet = position(player.getLocation().getBlock());
                 BlockPosition below = position(player.getLocation().getBlock().getRelative(0, -1, 0));

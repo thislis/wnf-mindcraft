@@ -1,5 +1,6 @@
 import { Vec3 } from 'vec3';
 import fs from 'fs';
+import { targetPriority } from '../library/firewater_targets.js';
 
 export const FIREWATER_OBSERVATION_MAX_AGE_MS = 30_000;
 export const FIREWATER_LINE_OF_SIGHT_DISTANCE = 16;
@@ -21,7 +22,8 @@ function isPressurePlate(name) {
     return name.endsWith('_pressure_plate');
 }
 
-function classifyBlock(name, context) {
+function classifyBlock(name, context, position) {
+    if (context.gems.some(gem => gem.name === name && positionKey(gem.position) === positionKey(position))) return 'gem';
     if (isInteractive(name)) return 'activator';
     if (isPressurePlate(name)) return 'pressure_plate';
     if (context.exitMaterials.has(name)) return 'exit';
@@ -35,20 +37,26 @@ function classifyBlock(name, context) {
 // surface a player can actually see and stand on.
 export function canSeeFirewaterTarget(bot, block, kind) {
     if (bot.canSeeBlock(block)) return true;
-    if (kind !== 'exit' || !bot.world?.raycast) return false;
+    if (!['exit', 'gem', 'activator', 'pressure_plate'].includes(kind) || !bot.world?.raycast) return false;
 
-    const head = bot.entity.position.offset(0, bot.entity.eyeHeight, 0);
+    const head = bot.entity.position.offset(0, bot.entity.eyeHeight || 1.62, 0);
     // Aim just inside the top face so the ray actually intersects the block;
     // a point just above the face can legitimately return no hit.
     const top = block.position.offset(0.5, 0.999, 0.5);
-    const direction = top.minus(head);
-    const distance = direction.norm();
-    const hit = bot.world.raycast(head, direction.normalize(), distance + 0.1);
-    return !!hit && hit.position.equals(block.position);
+    const samples = [top, ...(block.shapes || []).map(([x0, y0, z0, x1, y1, z1]) =>
+        block.position.offset((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2))];
+    return samples.some(point => {
+        const direction = point.minus(head);
+        const distance = direction.norm();
+        if (!distance) return true;
+        const hit = bot.world.raycast(head, direction.normalize(), distance + 0.1);
+        return !!hit && hit.position.equals(block.position);
+    });
 }
 
 function normalizeContext(raw = {}) {
     return {
+        gems: raw.gems || [], interactions: raw.interactions, role: raw.role, bounds: raw.bounds,
         exitMaterials: new Set([
             ...DEFAULT_EXITS,
             ...(raw.exitMaterials || []),
@@ -69,6 +77,7 @@ export class VisionInterpreter {
         this.now = options.now || (() => Date.now());
         this.observationMaxAgeMs = options.observationMaxAgeMs ?? FIREWATER_OBSERVATION_MAX_AGE_MS;
         this.observedTargets = new Map();
+        this.knownTargets = new Map();
     }
 
     async _ensureCamera() {
@@ -86,6 +95,15 @@ export class VisionInterpreter {
 
     clearFirewaterObservations() {
         this.observedTargets.clear();
+        this.knownTargets.clear();
+    }
+
+    getExplorationHints() {
+        const context = normalizeContext(this.agent.firewater?.getObservationContext?.());
+        return [...this.knownTargets.values()].filter(target => {
+            const block = this.agent.bot.blockAt(new Vec3(target.position.x, target.position.y, target.position.z));
+            return (!block || block.name === target.name) && targetPriority(target, context.role) < 3;
+        });
     }
 
     getRecentObservedTarget(x, y, z) {
@@ -122,6 +140,7 @@ export class VisionInterpreter {
         const targets = this._collectLineOfSightTargets();
         const timestamp = this.now();
         for (const target of targets) {
+            this.knownTargets.set(positionKey(target.position), target);
             this.observedTargets.set(positionKey(target.position), {
                 ...target,
                 observedAt: timestamp,
@@ -209,20 +228,36 @@ export class VisionInterpreter {
     _collectLineOfSightTargets() {
         const bot = this.agent.bot;
         const context = normalizeContext(this.agent.firewater?.getObservationContext?.());
-        const positions = bot.findBlocks({
-            matching: block => !!block && !!classifyBlock(block.name, context),
+        const safeLiquid = context.role === 'wade' ? 'water' : 'lava';
+        const find = category => bot.findBlocks({
+            matching: block => {
+                const kind = block && classifyBlock(block.name, context, block.position);
+                if (category === 'targets') return !!kind && kind !== 'hazard';
+                if (category === 'safe') return block?.name === safeLiquid;
+                return kind === 'hazard' && block.name !== safeLiquid;
+            },
             maxDistance: FIREWATER_LINE_OF_SIGHT_DISTANCE,
-            count: 512,
+            count: category === 'targets' ? 512 : 64,
             useExtraInfo: true,
         });
+        const positions = [...find('targets'), ...find('safe'), ...find('hazards')];
         const unique = new Map();
         for (const position of positions) {
             const block = bot.blockAt(position);
             if (!block) continue;
-            const kind = classifyBlock(block.name, context);
+            const bounds = context.bounds;
+            const p = block.position;
+            if (bounds && (p.x < bounds.min.x || p.x > bounds.max.x || p.y < bounds.min.y || p.y > bounds.max.y || p.z < bounds.min.z || p.z > bounds.max.z)) continue;
+            const kind = classifyBlock(block.name, context, block.position);
             if (!kind) continue;
             if (!canSeeFirewaterTarget(bot, block, kind)) continue;
+            const gem = context.gems.find(g => positionKey(g.position) === positionKey(block.position));
+            const interaction = context.interactions?.find(t => positionKey(t.position) === positionKey(block.position));
+            const role = gem?.role || interaction?.role ||
+                (['activator', 'pressure_plate'].includes(kind) ? (context.interactions ? 'unknown' : 'any') : undefined);
+            const properties = block.getProperties?.() || {};
             unique.set(positionKey(block.position), {
+                ...gem, role, powered: properties.powered === true,
                 name: block.name,
                 kind,
                 position: {
@@ -233,7 +268,7 @@ export class VisionInterpreter {
                 distance: Number(bot.entity.position.distanceTo(block.position).toFixed(2)),
             });
         }
-        return [...unique.values()].sort((a, b) => a.distance - b.distance);
+        return [...unique.values()].sort((a, b) => targetPriority(a, context.role) - targetPriority(b, context.role) || a.distance - b.distance);
     }
 
     _formatLineOfSightMetadata(targets) {
@@ -242,7 +277,7 @@ export class VisionInterpreter {
         return [
             `LINE_OF_SIGHT_TARGETS (<=${FIREWATER_LINE_OF_SIGHT_DISTANCE} blocks):`,
             ...targets.map(target =>
-                `- ${target.kind} ${target.name} at (${target.position.x}, ${target.position.y}, ${target.position.z}); distance=${target.distance}`
+                `- ${target.kind} ${target.name} at (${target.position.x}, ${target.position.y}, ${target.position.z}); distance=${target.distance}${target.role ? `; role=${target.role}` : ''}${target.kind === 'gem' ? '; approach with !collectGemAt' : ''}${target.kind === 'activator' ? `; powered=${target.powered}` : ''}`
             ),
         ].join('\n');
     }

@@ -1,5 +1,7 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
+import { collectObservedGem } from '../library/firewater_targets.js';
+import { findReachableExplorationTarget } from '../library/firewater_exploration.js';
 import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
 import { canSeeFirewaterTarget } from '../vision/vision_interpreter.js';
@@ -450,7 +452,7 @@ export const actionsList = [
             if (!convoManager.isOtherAgent(player_name))
                 return player_name + ' is not a bot, cannot start conversation.';
             if (agent.firewater?.isRunning() && !agent.firewater.canInitiateConversation(player_name)) {
-                return `Only the server-designated lead may initiate the active Firewater exchange with ${agent.firewater.getPartnerName()}.`;
+                return `Explore and observe at least 3 distinct new viewpoints before asking ${agent.firewater.getPartnerName()} for Firewater target information.`;
             }
             if (convoManager.inConversation() && !convoManager.inConversation(player_name)) 
                 convoManager.forceEndCurrentConversation();
@@ -462,11 +464,15 @@ export const actionsList = [
                 ...(agent.firewater?.getConversationOptions() || {}),
                 pauseAfterCurrentTurn: agent.self_prompter.isActive(),
             };
-            await convoManager.startConversation(
+            const started = await convoManager.startConversation(
                 player_name,
                 message,
                 conversationOptions
             );
+            if (started && agent.firewater?.isRunning()) {
+                agent.firewater.markIntelExchangeStarted();
+                return `Started a short Firewater intelligence exchange with ${player_name}.`;
+            }
         }
     },
     {
@@ -490,17 +496,24 @@ export const actionsList = [
             const actionResult = await agent.actions.runAction('action:observeFirewater', async () => {
                 result = await agent.vision_interpreter.observeFirewater();
             });
+            const progress = agent.firewater?.recordExplorationObservation?.();
+            if (progress) {
+                const guidance = progress.mayRequestIntel
+                    ? `You have now checked ${progress.searched} distinct new viewpoints. If the needed target is still absent, you may ask ${agent.firewater.getPartnerName()}; if you found something they likely need, you may report it. Include what you saw and where you searched.`
+                    : `Exploration progress: ${progress.searched}/${progress.required} distinct new viewpoints checked before requesting partner target information.`;
+                result = `${result}\n${guidance}`;
+            }
             return result || actionResult.message;
         }
     },
     {
         name: '!exploreFirewater',
-        description: 'Move to a different viewpoint along a role-safe path inside the active stage, then observe again. Example: !exploreFirewater(5)',
+        description: 'Move toward a nearby reachable unvisited viewpoint along a role-safe path. Failed targets are remembered to prevent repeated attempts. Example: !exploreFirewater(8)',
         params: {
             'distance': {
                 type: 'float',
-                description: 'Minimum distance from the current viewpoint, from 2 through 8 blocks.',
-                domain: [2, 8, '[]'],
+                description: 'Minimum novelty distance from prior viewpoints, from 4 through 16 blocks.',
+                domain: [4, 16, '[]'],
             },
         },
         perform: runAsAction(async (agent, distance) => {
@@ -513,9 +526,53 @@ export const actionsList = [
                 skills.log(agent.bot, 'Cannot explore safely because the active Firewater stage has no bounds.');
                 return;
             }
-            await skills.moveAway(agent.bot, distance);
-            skills.log(agent.bot, 'Reached a different Firewater viewpoint. Run !observeFirewater now.');
+            if (agent.firewater.hasPendingExplorationObservation()) {
+                skills.log(agent.bot, 'Observe the current new viewpoint with !observeFirewater before moving again.');
+                return;
+            }
+
+            const start = agent.bot.entity.position.clone();
+            const candidates = agent.firewater.prepareExploration(start, distance);
+            const target = await findReachableExplorationTarget(
+                agent.bot, agent.prompter.profile, candidates,
+                failed => agent.firewater.recordExplorationTargetFailure(start, failed),
+            );
+            if (agent.bot.interrupt_code || !agent.firewater.isRunning()) return;
+            if (target) {
+                await skills.goToPosition(agent.bot, target.x, target.y, target.z, 2);
+                const end = agent.bot.entity.position.clone();
+                if (agent.firewater.recordExplorationViewpoint(start, end, distance)) {
+                    skills.log(
+                        agent.bot,
+                        `Reached unvisited viewpoint ${end.floored()} toward nearby target (${target.x}, ${target.y}, ${target.z}). Run !observeFirewater now.`
+                    );
+                    return;
+                }
+                if (agent.bot.interrupt_code) return;
+                agent.firewater.recordExplorationTargetFailure(start, target);
+            }
+
+            const progress = agent.firewater.recordExplorationFailure();
+            if (progress.mayRequestIntel) {
+                skills.log(agent.bot, `Three exploration attempts could not reach a new viewpoint. You may ask ${agent.firewater.getPartnerName()} for route or target information now.`);
+            } else {
+                skills.log(agent.bot, `Could not reach a sufficiently new viewpoint (${progress.failed}/${progress.required} failed attempts before partner help is allowed). The next !exploreFirewater attempt will check other targets.`);
+            }
         })
+    },
+    {
+        name: '!collectGemAt',
+        description: 'Approach an observed gem assigned to your role or any and let the server collect it. Never mines or breaks the gem.',
+        params: {
+            x: { type: 'int', description: 'Observed gem block x.' },
+            y: { type: 'int', description: 'Observed gem block y.', domain: [-64, 320] },
+            z: { type: 'int', description: 'Observed gem block z.' },
+        },
+        perform: runAsAction(async (agent, x, y, z) => {
+            const authorized = validateObservedCoordinateTarget(agent, x, y, z, 'collect');
+            if (authorized.error) { skills.log(agent.bot, authorized.error); return; }
+            skills.log(agent.bot, await collectObservedGem(agent, authorized.target, skills.goToGoal));
+        }),
     },
     {
         name: '!activateBlockAt',

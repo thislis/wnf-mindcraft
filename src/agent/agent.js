@@ -167,6 +167,9 @@ export class Agent {
     }
 
     async _setupEventHandlers(save_data, init_message) {
+        this.bot.on('blockUpdate', (oldBlock, newBlock) => {
+            this.firewater.handleExplorationBlockUpdate(oldBlock, newBlock);
+        });
         const ignore_messages = [
             "Set own game mode to",
             "Set the time to",

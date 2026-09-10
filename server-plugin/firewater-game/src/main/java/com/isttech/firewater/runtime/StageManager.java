@@ -148,7 +148,8 @@ public final class StageManager {
                 return;
             }
             roles.enforceDedicatedBaseline(player);
-            if (ticks % 20 == 0) roles.refreshRoleEffects(player, role);
+            if (ticks % 20 == 0 && (!roles.isManual(player) || isInsideStage(player))) roles.refreshRoleEffects(player, role);
+            if (roles.isManual(player)) continue;
             if (!player.getWorld().getName().equals(session.stage().world())) {
                 log("BOUNDARY_VIOLATION", "stage=" + session.stage().id() + " attempt=" + session.attempt()
                     + " player=" + player.getName() + " cause=WORLD_EXIT position=" + compact(player.getLocation()));
@@ -232,6 +233,7 @@ public final class StageManager {
     public boolean onPlayerDeath(Player player) {
         StageSession session = active;
         if (session == null || session.state() != SessionState.RUNNING || roles.roleOf(player).isEmpty()) return false;
+        if (roles.isManual(player) && !isInsideStage(player)) return false;
         String cause = session.pendingCause() == null ? "DEATH" : session.pendingCause();
         String victim = session.pendingVictim() == null ? player.getName() : session.pendingVictim();
         beginReset(cause, victim, true);
@@ -242,6 +244,7 @@ public final class StageManager {
         StageSession session = active;
         Optional<Role> role = roles.roleOf(event.getPlayer());
         if (session == null || role.isEmpty()) return;
+        if (roles.isManual(event.getPlayer()) && !event.getPlayer().getName().equals(session.pendingVictim())) return;
         if (session.state() == SessionState.RESETTING || session.state() == SessionState.RUNNING) {
             event.setRespawnLocation(toBukkitLocation(session.stage(), session.stage().spawns().get(role.get())));
         }
@@ -275,23 +278,39 @@ public final class StageManager {
             && session.stage().bounds().contains(position);
     }
 
+    private boolean isInsideStage(Player player) {
+        return active != null && protects(player.getWorld().getName(), position(player.getLocation().getBlock()));
+    }
+
+    public boolean isStageControl(String worldName, BlockPosition position) {
+        StageSession session = active;
+        if (session == null || !session.stage().world().equals(worldName)) return false;
+        return session.stage().walls().values().stream()
+            .flatMap(wall -> wall.triggers().stream())
+            .anyMatch(trigger -> trigger.position().equals(position));
+    }
+
     public boolean isRegisteredInteraction(Player player, String worldName, BlockPosition position) {
         StageSession session = active;
-        if (session == null || session.state() != SessionState.RUNNING || roles.roleOf(player).isEmpty()) return false;
+        Optional<Role> role = roles.roleOf(player);
+        if (session == null || session.state() != SessionState.RUNNING || role.isEmpty()) return false;
         if (!session.stage().world().equals(worldName)) return false;
         return session.stage().walls().values().stream()
             .flatMap(wall -> wall.triggers().stream())
             .anyMatch(trigger -> trigger.position().equals(position)
-                && (trigger.type() == TriggerType.LEVER || trigger.type() == TriggerType.BUTTON));
+                && (trigger.type() == TriggerType.LEVER || trigger.type() == TriggerType.BUTTON)
+                && trigger.allows(role.get()));
     }
 
     public boolean isRegisteredPad(Player player, String worldName, BlockPosition position) {
         StageSession session = active;
-        if (session == null || session.state() != SessionState.RUNNING || roles.roleOf(player).isEmpty()) return false;
+        Optional<Role> role = roles.roleOf(player);
+        if (session == null || session.state() != SessionState.RUNNING || role.isEmpty()) return false;
         if (!session.stage().world().equals(worldName)) return false;
         return session.stage().walls().values().stream()
             .flatMap(wall -> wall.triggers().stream())
-            .anyMatch(trigger -> trigger.type() == TriggerType.PAD && trigger.position().equals(position));
+            .anyMatch(trigger -> trigger.type() == TriggerType.PAD && trigger.position().equals(position)
+                && trigger.allows(role.get()));
     }
 
     public boolean isProtectedWallCell(String worldName, BlockPosition position) {

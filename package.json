@@ -48,11 +48,11 @@
     "scripts": {
         "postinstall": "patch-package",
         "start": "node main.js",
-        "test:firewater": "node --test src/models/openai_codex.test.js src/agent/vision/vision_interpreter.test.js src/agent/firewater_session.test.js src/agent/library/firewater_movements.test.js",
+        "test:firewater": "node --test src/models/openai_codex.test.js src/agent/vision/vision_interpreter.test.js src/agent/firewater_session.test.js src/agent/library/firewater_movements.test.js src/agent/library/firewater_exploration.test.js src/agent/library/firewater_targets.test.js",
         "test:firewater:vision-live": "node scripts/test-firewater-vision-live.mjs",
         "test:firewater:vision-live:oauth": "node scripts/test-firewater-vision-live.mjs oauth",
         "test:firewater:vision-live:api": "node scripts/test-firewater-vision-live.mjs api",
-        "lint:firewater": "eslint scripts/test-firewater-vision-live.mjs src/models/openai_codex.js src/models/openai_codex.test.js src/agent/vision/camera.js src/agent/vision/screenshot_retention.js src/agent/vision/vision_interpreter.js src/agent/vision/vision_interpreter.test.js src/agent/firewater_session.js src/agent/firewater_session.test.js src/agent/conversation.js src/agent/library/firewater_movements.js src/agent/library/firewater_movements.test.js",
+        "lint:firewater": "eslint scripts/test-firewater-vision-live.mjs src/models/openai_codex.js src/models/openai_codex.test.js src/agent/vision/camera.js src/agent/vision/screenshot_retention.js src/agent/vision/vision_interpreter.js src/agent/vision/vision_interpreter.test.js src/agent/firewater_session.js src/agent/firewater_session.test.js src/agent/conversation.js src/agent/library/firewater_movements.js src/agent/library/firewater_exploration.js src/agent/library/firewater_targets.js src/agent/library/firewater_movements.test.js src/agent/library/firewater_exploration.test.js src/agent/library/firewater_targets.test.js",
         "check:firewater-runtime": "node scripts/check-firewater-runtime.mjs",
         "smoke:firewater": "node scripts/smoke-firewater-runtime.mjs",
         "reinstall": "npm run clean:modules && npm install",

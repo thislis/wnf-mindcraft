@@ -223,5 +223,6 @@ test('command movement entry points converge on the role-aware factory', () => {
     assert.match(actionsSource, /name: '!useOn'[\s\S]{0,1200}skills\.useToolOn/);
     assert.match(actionsSource, /name: '!activateBlockAt'[\s\S]{0,1800}skills\.goToPosition/);
     assert.match(actionsSource, /name: '!standOnBlock'[\s\S]{0,2200}skills\.goToPosition/);
-    assert.match(actionsSource, /name: '!exploreFirewater'[\s\S]{0,1400}skills\.moveAway/);
+    assert.match(actionsSource, /name: '!exploreFirewater'[\s\S]{0,3000}prepareExploration/);
+    assert.match(actionsSource, /name: '!exploreFirewater'[\s\S]{0,3000}skills\.goToPosition/);
 });
