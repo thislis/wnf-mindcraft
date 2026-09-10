@@ -6,8 +6,10 @@ import { executeCommand, getCommandDocs } from './commands/index.js';
 import { validateObservedCoordinateTarget } from './commands/actions.js';
 import { SelfPrompter } from './self_prompter.js';
 import {
+    FIREWATER_EXPLORATIONS_BEFORE_INTEL,
     FirewaterSession,
     extractFirewaterMessage,
+    planFirewaterExploration,
     parseFirewaterMessage,
 } from './firewater_session.js';
 
@@ -211,7 +213,10 @@ test('trusted START participant names override profile partner and lead fallback
     assert.equal(wadeSession.session.emberPlayer, 'FlameMate');
     assert.equal(wadeSession.session.leadRole, 'wade');
     assert.equal(wadeSession.getPartnerName(), 'FlameMate');
-    assert.equal(wadeSession.canInitiateConversation('FlameMate'), true);
+    assert.equal(wadeSession.canInitiateConversation('FlameMate'), false);
+    assert.equal(wadeSession.canInitiateConversation(
+        'FlameMate', { firewaterPlanning: true }
+    ), true);
     assert.equal(wadeSession.canInitiateConversation('LegacyEmber'), false);
     assert.match(wade.self_prompter.prompt, /with FlameMate/);
     assert.equal(wadeConversations.starts[0].name, 'FlameMate');
@@ -407,7 +412,7 @@ test('active Firewater command allowlist is enforced in execution and prompt doc
     assert.doesNotMatch(docs, /!newAction/);
 });
 
-test('active Firewater goal tells bots to change viewpoint when required elements are hidden', async () => {
+test('active Firewater goal requires dispersed exploration before partner intelligence', async () => {
     const agent = makeAgent('ember');
     const session = new FirewaterSession(agent, {
         conversationManager: makeFakeConversationManager(),
@@ -421,7 +426,106 @@ test('active Firewater goal tells bots to change viewpoint when required element
     );
 
     assert.match(agent.self_prompter.prompt, /plate, lever, button, gem, exit/);
-    assert.match(agent.self_prompter.prompt, /first !exploreFirewater\(5\), then !observeFirewater/);
+    assert.match(agent.self_prompter.prompt, /!exploreFirewater\(8\), then !observeFirewater/);
+    assert.match(agent.self_prompter.prompt, /at least 3 distinct new viewpoints/);
+});
+
+test('exploration planner tries nearby unvisited viewpoints before distant anchors', () => {
+    const bounds = {
+        min: { x: 0, y: 60, z: 0 },
+        max: { x: 40, y: 72, z: 40 },
+    };
+    const current = { x: 4, y: 64, z: 4 };
+    const first = planFirewaterExploration(bounds, current, [], 'wade', 8);
+    assert.ok(first.length > 6);
+    assert.ok(Math.hypot(first[0].x - current.x, first[0].z - current.z) <= 10);
+
+    const visited = [current, first[0], first[1]];
+    const next = planFirewaterExploration(bounds, current, visited, 'wade', 8);
+    assert.notDeepEqual(
+        next.slice(0, 3).map(({ x, y, z }) => [x, y, z]),
+        first.slice(0, 3).map(({ x, y, z }) => [x, y, z]),
+    );
+});
+
+test('returning to a visited viewpoint is not counted as new exploration', () => {
+    const agent = makeAgent('wade');
+    const session = new FirewaterSession(agent, { planningDelayMs: -1 });
+    session.session = {
+        bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } },
+    };
+    const first = new Vec3(4, 64, 4);
+    const second = new Vec3(14, 64, 4);
+    session.prepareExploration(first, 8);
+    assert.equal(session.recordExplorationViewpoint(first, second, 8), true);
+    session.recordExplorationObservation();
+    session.prepareExploration(second, 8);
+
+    assert.equal(session.recordExplorationViewpoint(second, first, 8), false);
+    assert.equal(session.getExplorationProgress().searched, 1);
+});
+
+test('manual partner intelligence is gated until three explored observations', () => {
+    const agent = makeAgent('ember');
+    const session = new FirewaterSession(agent, { planningDelayMs: -1 });
+    session.lifecycle = 'running';
+    session.session = {
+        wadePlayer: 'Wade', emberPlayer: 'Ember', lead: 'Wade',
+        bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } },
+    };
+
+    assert.equal(session.canInitiateConversation('Wade'), false);
+    assert.equal(session.canInitiateConversation('Wade', { firewaterPlanning: true }), false);
+    for (let index = 0; index < FIREWATER_EXPLORATIONS_BEFORE_INTEL; index++) {
+        session.exploration.pendingObservation = true;
+        session.recordExplorationObservation();
+    }
+    assert.equal(session.canInitiateConversation('Wade'), true);
+    session.markIntelExchangeStarted();
+    assert.equal(session.canInitiateConversation('Wade'), false);
+});
+
+test('automatic planning remains lead-only without satisfying the manual search threshold', () => {
+    const wade = makeAgent('wade');
+    const session = new FirewaterSession(wade, { planningDelayMs: -1 });
+    session.lifecycle = 'running';
+    session.session = {
+        wadePlayer: 'Wade', emberPlayer: 'Ember', lead: 'Wade', bounds: null,
+    };
+
+    assert.equal(session.canInitiateConversation('Ember'), false);
+    assert.equal(session.canInitiateConversation('Ember', { firewaterPlanning: true }), true);
+});
+
+test('Ember can initiate a short intelligence exchange after the search threshold', async () => {
+    const packets = [];
+    const manager = new ConversationManager((name, packet) => packets.push({ name, packet }));
+    const ember = makeAgent('ember');
+    const session = new FirewaterSession(ember, {
+        conversationManager: manager,
+        planningDelayMs: -1,
+    });
+    session.lifecycle = 'running';
+    session.session = {
+        id: 'intel', stage: 'hidden', attempt: 1,
+        wadePlayer: 'Wade', emberPlayer: 'Ember', lead: 'Wade', bounds: null,
+    };
+    session.exploration.observedSinceIntel = FIREWATER_EXPLORATIONS_BEFORE_INTEL;
+    ember.firewater = session;
+    manager.initAgent(ember);
+    manager.updateAgents([
+        { name: 'Wade', in_game: true },
+        { name: 'Ember', in_game: true },
+    ]);
+
+    const started = await manager.startConversation(
+        'Wade',
+        'I searched three viewpoints. Do you see my exit?',
+        session.getConversationOptions(),
+    );
+    assert.equal(started, true);
+    assert.equal(packets[0].name, 'Wade');
+    manager.endAllConversations({ resume: false });
 });
 
 test('observed coordinate commands require current 16-block line of sight before movement', () => {
@@ -784,5 +888,90 @@ test('RESET pause and CLEAR stop interrupt a managed retry backoff promptly', as
             `${operation} waited for the full managed retry cooldown`
         );
         assert.equal(operation === 'pause' ? selfPrompter.isPaused() : selfPrompter.isStopped(), true);
+    }
+});
+
+
+test('forest_gems exploration does not repeat the same six distant goals', () => {
+    const session = new FirewaterSession(makeAgent('ember'), { planningDelayMs: -1 });
+    session.session = { bounds: {
+        min: { x: 1600, y: -64, z: 0 }, max: { x: 1674, y: -46, z: 30 },
+    } };
+    const current = new Vec3(1612, -61, 20);
+    const first = session.prepareExploration(current, 8).slice(0, 6);
+    assert.equal(first.length, 6);
+    assert.ok(first.every(target => current.distanceTo(new Vec3(target.x, target.y, target.z)) < 12));
+    for (const target of first) session.recordExplorationTargetFailure(current, target);
+    const key = target => `${target.x},${target.y},${target.z}`;
+    const failed = new Set(first.map(key));
+    for (const distance of [4, 8, 12, 16]) {
+        const next = session.prepareExploration(current, distance);
+        assert.ok(next.length > 0);
+        assert.ok(next.every(target => !failed.has(key(target))));
+    }
+    session.markIntelExchangeStarted();
+    assert.ok(session.prepareExploration(current, 8).every(target => !failed.has(key(target))));
+});
+
+test('failed paths can be retried after a gate changes but not on lava level updates', () => {
+    const session = new FirewaterSession(makeAgent('ember'), { planningDelayMs: -1 });
+    session.lifecycle = 'running';
+    session.session = { bounds: {
+        min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 },
+    } };
+    const current = new Vec3(4, 64, 4);
+    const target = session.prepareExploration(current, 8)[0];
+    session.recordExplorationTargetFailure(current, target);
+    const contains = () => session.prepareExploration(current, 8).some(p =>
+        p.x === target.x && p.y === target.y && p.z === target.z);
+    session.handleExplorationBlockUpdate(
+        { type: 1, stateId: 1 }, { type: 1, stateId: 2, name: 'lava', position: current });
+    assert.equal(contains(), false);
+    session.handleExplorationBlockUpdate(
+        { type: 1, stateId: 1 }, { type: 0, stateId: 0, name: 'air', position: new Vec3(90, 64, 90) });
+    assert.equal(contains(), false);
+    session.handleExplorationBlockUpdate(
+        { type: 1, stateId: 1 }, { type: 0, stateId: 0, name: 'air', position: current });
+    assert.equal(contains(), true);
+});
+
+test('gem stages expose collection commands and enforce gem/device ownership for both roles', async () => {
+    for (const role of ['wade', 'ember']) {
+        const agent = makeAgent(role);
+        const session = new FirewaterSession(agent, { planningDelayMs: -1 });
+        agent.firewater = session;
+        agent.blocked_actions = [];
+        await session.handleRawMessage('server', '[FWG:START] session=targets; stage=gems; min-x=0; min-y=60; min-z=0; max-x=40; max-y=72; max-z=40; interaction-roles=8,64,8,wade|8,64,16,ember; gems=7,64,8,blue_stained_glass,wade,-0.5,2.1|7,64,16,red_stained_glass,ember,-0.5,2.1');
+        assert.equal(session.getObservationContext().gems.length, 2);
+        assert.equal(session.getObservationContext().interactions.length, 2);
+        assert.match(agent.self_prompter.prompt, /!collectGemAt/);
+        assert.doesNotMatch(agent.self_prompter.prompt, /Only then leave the plate/);
+        for (const kind of ['gem', 'activator', 'pressure_plate']) {
+            const action = { gem: 'collect', activator: 'activate', pressure_plate: 'stand' }[kind];
+            const name = { gem: 'blue_stained_glass', activator: 'lever', pressure_plate: 'stone_pressure_plate' }[kind];
+            const base = { kind, name, position: { x: 8, y: 64, z: 8 } };
+            assert.equal(session.validateObservedTarget({ ...base, role }, action), null);
+            assert.equal(session.validateObservedTarget({ ...base, role: 'any' }, action), null);
+            assert.match(session.validateObservedTarget({ ...base, role: role === 'wade' ? 'ember' : 'wade' }, action), /assigned/);
+            assert.match(session.validateObservedTarget({ ...base, role: 'unknown' }, action), /assigned/);
+        }
+        assert.match(session.validateObservedTarget(null, 'collect'), /not visible/);
+        assert.match(getCommandDocs(agent), /!collectGemAt/);
+    }
+});
+
+test('both roles explore toward observed own gems and their safe liquid instead of the opposite lane', () => {
+    const bounds = { min: { x: 1600, y: -64, z: 0 }, max: { x: 1674, y: -46, z: 30 } };
+    for (const [role, z, liquid] of [['wade', 7, 'water'], ['ember', 23, 'lava']]) {
+        const current = { x: 1604, y: -60, z: 15 };
+        for (const hint of [
+            { kind: 'gem', role, offsetY: -0.5, position: { x: 1614, y: -59, z } },
+            { kind: 'hazard', name: liquid, position: { x: 1614, y: -61, z } },
+            { kind: 'activator', role, position: { x: 1621, y: -60, z } },
+        ]) {
+            const first = planFirewaterExploration(bounds, current, [], role, 8, [hint])[0];
+            assert.ok(first.x > current.x);
+            assert.ok(role === 'wade' ? first.z < current.z : first.z > current.z);
+        }
     }
 });

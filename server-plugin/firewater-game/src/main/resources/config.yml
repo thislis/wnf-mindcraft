@@ -2,6 +2,9 @@ players:
   wade: Wade
   ember: Ember
 
+# Set in-game with /fw role set <wade|ember> [player]. Manual players keep their OP, game mode and inventory.
+manual-players: {}
+
 # These blocks are treated as poison when touched at the feet or immediately below.
 default-poison-materials:
   - lime_carpet

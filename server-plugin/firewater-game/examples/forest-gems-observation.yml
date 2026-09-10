@@ -1,0 +1,65 @@
+# Merge into the forest_gems stage using the matching forest temple datapack.
+gems:
+  - x: 1614
+    y: -59
+    z: 7
+    material: blue_stained_glass
+    role: wade
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1623
+    y: -59
+    z: 12
+    material: blue_stained_glass
+    role: wade
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1655
+    y: -54
+    z: 8
+    material: blue_stained_glass
+    role: wade
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1664
+    y: -49
+    z: 20
+    material: blue_stained_glass
+    role: wade
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1614
+    y: -59
+    z: 23
+    material: red_stained_glass
+    role: ember
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1623
+    y: -59
+    z: 18
+    material: red_stained_glass
+    role: ember
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1655
+    y: -54
+    z: 22
+    material: red_stained_glass
+    role: ember
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1664
+    y: -49
+    z: 10
+    material: red_stained_glass
+    role: ember
+    collection-offset-y: -0.5
+    collection-radius: 2.1
+  - x: 1669
+    y: -49
+    z: 15
+    material: emerald_block
+    role: any
+    collection-offset-y: -0.5
+    collection-radius: 2.1

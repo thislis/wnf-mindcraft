@@ -18,6 +18,7 @@ import java.util.Optional;
 
 public final class RoleService {
     private final Map<Role, String> names = new EnumMap<>(Role.class);
+    private final Map<Role, String> manualNames = new EnumMap<>(Role.class);
 
     public RoleService(String wadeName, String emberName) {
         String validatedWadeName = validateName(wadeName);
@@ -30,7 +31,7 @@ public final class RoleService {
     }
 
     public String name(Role role) {
-        return names.get(role);
+        return manualNames.getOrDefault(role, names.get(role));
     }
 
     public Optional<Role> roleOf(Player player) {
@@ -38,10 +39,52 @@ public final class RoleService {
     }
 
     public Optional<Role> roleOf(String playerName) {
-        return names.entrySet().stream()
-            .filter(entry -> entry.getValue().equalsIgnoreCase(playerName))
-            .map(Map.Entry::getKey)
+        return java.util.Arrays.stream(Role.values())
+            .filter(role -> name(role).equalsIgnoreCase(playerName))
             .findFirst();
+    }
+
+    public boolean isManual(Role role) {
+        return manualNames.containsKey(role);
+    }
+
+    public boolean isManual(Player player) {
+        return roleOf(player).map(this::isManual).orElse(false);
+    }
+
+    public boolean isDedicated(Player player) {
+        return roleOf(player).filter(role -> !isManual(role)).isPresent();
+    }
+
+    public void loadAssignments(Map<Role, String> assignments) {
+        Map<Role, String> validated = new EnumMap<>(Role.class);
+        assignments.forEach((role, name) -> validated.put(role, validateName(name)));
+        String wade = validated.getOrDefault(Role.WADE, names.get(Role.WADE));
+        String ember = validated.getOrDefault(Role.EMBER, names.get(Role.EMBER));
+        if (wade.equalsIgnoreCase(ember)) {
+            throw new IllegalArgumentException("Wade and Ember must use different player names");
+        }
+        manualNames.clear();
+        manualNames.putAll(validated);
+    }
+
+    public void assign(Role role, String playerName) {
+        String validated = validateName(playerName);
+        validateDistinct(role, validated);
+        manualNames.put(role, validated);
+    }
+
+    public void clearAssignment(Role role) {
+        validateDistinct(role, names.get(role));
+        manualNames.remove(role);
+    }
+
+    private void validateDistinct(Role role, String playerName) {
+        for (Role other : Role.values()) {
+            if (other != role && name(other).equalsIgnoreCase(playerName)) {
+                throw new IllegalArgumentException(playerName + " already has the " + other.key() + " role.");
+            }
+        }
     }
 
     public Player online(Role role) {
@@ -52,6 +95,10 @@ public final class RoleService {
     }
 
     public void enterStage(Player player, Role role) {
+        if (isManual(player)) {
+            refreshRoleEffects(player, role);
+            return;
+        }
         enforceDedicatedBaseline(player);
         clearEffects(player);
         player.setFireTicks(0);
@@ -63,7 +110,17 @@ public final class RoleService {
 
     public void refreshRoleEffects(Player player, Role role) {
         enforceDedicatedBaseline(player);
-        applyRoleEffect(player, role);
+        if (isManual(player)) {
+            // Short-lived effects expire after leaving the stage or stopping the plugin.
+            // Do not replace stronger/longer effects belonging to the player.
+            PotionEffectType type = role == Role.WADE ? PotionEffectType.WATER_BREATHING : PotionEffectType.FIRE_RESISTANCE;
+            PotionEffect current = player.getPotionEffect(type);
+            if (current == null || (!current.isInfinite() && current.getDuration() <= 20 && current.getAmplifier() == 0)) {
+                player.addPotionEffect(new PotionEffect(type, 40, 0, false, false, true));
+            }
+        } else {
+            applyRoleEffect(player, role);
+        }
         if (role == Role.EMBER) player.setFireTicks(0);
     }
 
@@ -75,6 +132,7 @@ public final class RoleService {
         for (Role role : Role.values()) {
             Player player = online(role);
             if (player != null) enforceIdle(player);
+            if (isManual(role)) continue;
             OfflinePlayer offline = Bukkit.getOfflinePlayer(name(role));
             if (offline.isOp()) offline.setOp(false);
         }
@@ -88,6 +146,7 @@ public final class RoleService {
     }
 
     public void enforceDedicatedBaseline(Player player) {
+        if (!isDedicated(player)) return;
         if (player.isOp()) player.setOp(false);
         if (player.getGameMode() != GameMode.ADVENTURE) player.setGameMode(GameMode.ADVENTURE);
         boolean hasInventory = false;
@@ -106,6 +165,7 @@ public final class RoleService {
     }
 
     private void enforceIdle(Player player) {
+        if (!isDedicated(player)) return;
         enforceDedicatedBaseline(player);
         clearEffects(player);
         player.setFireTicks(0);

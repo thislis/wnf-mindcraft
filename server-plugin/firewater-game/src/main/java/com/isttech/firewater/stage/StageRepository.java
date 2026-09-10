@@ -111,6 +111,14 @@ public final class StageRepository {
             yaml.set(path + ".blocks", blocks);
             yaml.set(path + ".triggers", wall.triggers().stream().map(StageRepository::triggerMap).toList());
         }
+        yaml.set("gems", stage.gems().stream().map(gem -> {
+            Map<String, Object> map = positionMap(gem.position());
+            map.put("material", gem.material());
+            map.put("role", gem.access().key());
+            map.put("collection-offset-y", gem.offsetY());
+            map.put("collection-radius", gem.radius());
+            return map;
+        }).toList());
         yaml.set("hazards.poison-materials", stage.poisonMaterials());
 
         if (!stagesDirectory.exists() && !stagesDirectory.mkdirs()) {
@@ -176,10 +184,18 @@ public final class StageRepository {
                 }
                 for (Map<?, ?> raw : wallSection.getMapList("triggers")) {
                     Map<String, Object> map = stringKeyMap(raw);
-                    wall.triggers().add(new TriggerDefinition(TriggerType.parse(requiredString(map, "type")), readPosition(map)));
+                    wall.triggers().add(new TriggerDefinition(TriggerType.parse(requiredString(map, "type")), readPosition(map),
+                        TriggerAccess.parse(String.valueOf(map.getOrDefault("role", "any")))));
                 }
                 stage.walls().put(wallId, wall);
             }
+        }
+        for (Map<?, ?> raw : yaml.getMapList("gems")) {
+            Map<String, Object> map = stringKeyMap(raw);
+            stage.gems().add(new GemDefinition(readPosition(map), requiredString(map, "material"),
+                TriggerAccess.parse(String.valueOf(map.getOrDefault("role", "any"))),
+                Double.parseDouble(String.valueOf(map.getOrDefault("collection-offset-y", 0.5))),
+                Double.parseDouble(String.valueOf(map.getOrDefault("collection-radius", 2.1)))));
         }
         stage.poisonMaterials().addAll(yaml.getStringList("hazards.poison-materials"));
         if (stage.poisonMaterials().isEmpty()) stage.poisonMaterials().addAll(defaultPoisonMaterials);
@@ -198,7 +214,8 @@ public final class StageRepository {
     }
 
     private static TriggerDefinition readTrigger(ConfigurationSection section) {
-        return new TriggerDefinition(TriggerType.parse(requiredString(section, "type")), readPosition(section));
+        return new TriggerDefinition(TriggerType.parse(requiredString(section, "type")), readPosition(section),
+            TriggerAccess.parse(section.getString("role", "any")));
     }
 
     private static BlockPosition readPosition(ConfigurationSection section) {
@@ -230,6 +247,7 @@ public final class StageRepository {
     private static Map<String, Object> triggerMap(TriggerDefinition trigger) {
         Map<String, Object> map = positionMap(trigger.position());
         map.put("type", trigger.type().key());
+        map.put("role", trigger.access().key());
         return map;
     }
 

@@ -54,5 +54,7 @@ public final class StageDefinition {
         this.finishHoldTicks = finishHoldTicks;
     }
     public Map<String, WallDefinition> walls() { return walls; }
+    private final List<GemDefinition> gems = new ArrayList<>();
+    public List<GemDefinition> gems() { return gems; }
     public List<String> poisonMaterials() { return poisonMaterials; }
 }

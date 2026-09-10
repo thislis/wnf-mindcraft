@@ -102,6 +102,10 @@ async function main() {
     const stagesDirectory = path.join(pluginsDirectory, 'FirewaterGame', 'stages');
     await fs.mkdir(stagesDirectory, { recursive: true });
     await fs.copyFile(paperJar, path.join(temporaryRoot, 'server.jar'));
+    // Reuse the installed server's public runtime dependencies in the isolated server.
+    for (const directory of ['cache', 'libraries', 'versions']) {
+        await fs.cp(path.join(serverRoot, directory), path.join(temporaryRoot, directory), { recursive: true });
+    }
     await fs.copyFile(pluginJar, path.join(pluginsDirectory, 'FirewaterGame.jar'));
     await fs.writeFile(path.join(temporaryRoot, 'eula.txt'), 'eula=true\n', 'utf8');
 
@@ -313,6 +317,89 @@ hazards:
                 throw new Error(`${target} did not receive FWG CLEAR.`);
             }
         }
+
+        // A human can assign their own role in-game without losing OP or ordinary abilities.
+        const human = await Promise.race([connectBot('Builder', port, whispers), timeout(20_000, 'Builder login')]);
+        bots.push(human);
+        const humanMessages = [];
+        human.on('messagestr', message => humanMessages.push(message));
+        command('op Builder');
+        command('gamemode creative Builder');
+        command('give Builder minecraft:diamond 3');
+        await waitUntil(() => human.game.gameMode === 'creative' && human.inventory.items().some(item => item.name === 'diamond'), 'human initial state');
+        human.chat('/fw role set wade');
+        await waitUntil(() => humanMessages.some(message => message.includes('wade = Builder (manual')), 'in-game self assignment');
+        const savedConfig = await fs.readFile(path.join(pluginsDirectory, 'FirewaterGame', 'config.yml'), 'utf8');
+        if (!/wade: Builder/.test(savedConfig)) throw new Error('Manual role assignment was not persisted.');
+        const checkHuman = async label => {
+            await new Promise(resolve => setTimeout(resolve, 250));
+            const ops = JSON.parse(await fs.readFile(path.join(temporaryRoot, 'ops.json'), 'utf8'));
+            if (!ops.some(player => player.name === 'Builder')) throw new Error(`Human OP lost: ${label}`);
+            if (human.game.gameMode !== 'creative') throw new Error(`Human game mode lost: ${label}`);
+            if (!human.inventory.items().some(item => item.name === 'diamond')) throw new Error(`Human inventory lost: ${label}`);
+        };
+        await checkHuman('idle');
+        command('tp Builder 30.5 100 0.5');
+        await waitUntil(() => human.entity.position.x > 30, 'manual idle movement');
+        await checkHuman('idle movement');
+        if (human.entity.position.x < 30) throw new Error('Manual player was returned to lobby.');
+
+        const manualStarted = waitForLog(/event=STAGE_STARTED stage=smoke .*attempt=1/, 'manual stage start');
+        human.chat('/fw stage start smoke');
+        await manualStarted;
+        await checkHuman('stage start');
+        command('tp Builder 30.5 100 0.5');
+        await waitUntil(() => human.entity.position.x > 30, 'manual boundary exit');
+        await checkHuman('boundary exit');
+        if (human.entity.position.x < 30) throw new Error('Manual boundary exit reset the stage.');
+        const beforeAttempts = (log.match(/event=ATTEMPT_RESET/g) || []).length;
+        command('execute in minecraft:the_nether run tp Builder 0.5 100 0.5');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if ((log.match(/event=ATTEMPT_RESET/g) || []).length !== beforeAttempts) throw new Error('Manual world exit reset the stage.');
+        command('execute in minecraft:overworld run tp Builder 0.5 100 0.5');
+        await waitUntil(() => human.entity.position.y === 100, 'return to stage');
+
+        command('setblock 1 100 0 minecraft:chest');
+        await waitUntil(() => human.blockAt(new Vec3(1, 100, 0))?.name === 'chest', 'ordinary stage chest');
+        // Mineflayer does not send the 1.21.6 loading-screen acknowledgement.
+        human._client.write('player_loaded', {});
+        const openedChest = once(human, 'windowOpen');
+        human._client.write('block_place', {
+            location: new Vec3(1, 100, 0), direction: 1, hand: 0,
+            cursorX: 0.5, cursorY: 0.5, cursorZ: 0.5,
+            insideBlock: false, sequence: 0, worldBorderHit: false,
+        });
+        const [chest] = await Promise.race([openedChest, timeout(5_000, 'manual chest interaction')]);
+        human.closeWindow(chest);
+        command('tp Builder 30.5 100 0.5');
+        command('setblock 31 100 0 minecraft:stone');
+        await waitUntil(() => human.blockAt(new Vec3(31, 100, 0))?.name === 'stone' && human.entity.position.x > 30, 'outside editable block');
+        human._client.write('block_dig', { status: 0, location: new Vec3(31, 100, 0), face: 1, sequence: 1 });
+        await waitUntil(() => human.blockAt(new Vec3(31, 100, 0))?.name === 'air', 'manual block break outside stage');
+
+        const manualFailure = waitForLog(/event=HAZARD_CONTACT .*player=Builder hazard=LAVA/, 'manual role hazard');
+        const manualReset = waitForLog(/event=ATTEMPT_RESET stage=smoke attempt=2 .*cause=LAVA/, 'manual hazard reset');
+        command('setblock 0 100 8 minecraft:lava');
+        command('tp Builder 0.5 100 8.5');
+        await manualFailure;
+        command('fill -2 100 6 2 102 10 minecraft:air');
+        await manualReset;
+        await checkHuman('hazard reset');
+
+        humanMessages.length = 0;
+        human.chat('/fw role set ember Builder');
+        await waitUntil(() => humanMessages.some(message => message.includes('Stop the active stage')), 'active assignment refusal');
+        const manualCleared = waitForLog(/event=STAGE_CLEARED stage=smoke .*attempts=2/, 'manual clear');
+        command('tp Builder 8.5 100 0.5');
+        command('tp Ember 10.5 100 0.5');
+        await manualCleared;
+        await checkHuman('clear');
+        if (human.entity.position.distanceTo(new Vec3(8.5, 100, 0.5)) > 1) throw new Error('Manual clear forced lobby teleport.');
+        humanMessages.length = 0;
+        human.chat('/fw role clear wade');
+        await waitUntil(() => humanMessages.some(message => message.includes('wade = Wade (dedicated bot)')), 'manual assignment removal');
+        await checkHuman('role removal');
+        console.log('FIREWATER_MANUAL_ROLE_SMOKE_OK assignment=in-game persistence=config op=preserved mode=preserved inventory=preserved movement=free interaction=chest,break hazard=reset clear=verified');
 
         console.log('FIREWATER_RUNTIME_SMOKE_OK walls=XOR_OR attempts=4 hazards=WATER,LAVA,POISON exits=dual whispers=verified');
     } catch (error) {

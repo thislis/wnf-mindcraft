@@ -17,6 +17,7 @@ export const FIREWATER_COMMAND_ALLOWLIST = new Set([
     '!entities',
     '!observeFirewater',
     '!exploreFirewater',
+    '!collectGemAt',
     '!activateBlockAt',
     '!standOnBlock',
     '!startConversation',

@@ -156,7 +156,7 @@ export class ConversationManager {
     }
 
     async startConversation(send_to, message, options = {}) {
-        if (this.agent.firewater?.isRunning() && !this.agent.firewater.canInitiateConversation(send_to)) {
+        if (this.agent.firewater?.isRunning() && !this.agent.firewater.canInitiateConversation(send_to, options)) {
             console.warn(`${this.agent.name} is not allowed to initiate a Firewater conversation with ${send_to}.`);
             return false;
         }
@@ -249,6 +249,7 @@ export class ConversationManager {
         }
 
         if (received.start) {
+            this.agent.firewater?.markIntelExchangeStarted?.();
             convo.reset({
                 id: received.conversation_id,
                 maxMessages: received.max_messages,

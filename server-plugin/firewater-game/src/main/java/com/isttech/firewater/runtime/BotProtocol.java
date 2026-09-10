@@ -19,6 +19,14 @@ public final class BotProtocol {
             + "; ember-exit=" + clean(stage.finishes().get(Role.EMBER).material())
             + "; hold-ticks=" + stage.finishHoldTicks()
             + "; poison=" + clean(String.join(",", stage.poisonMaterials()))
+            + "; interaction-roles=" + stage.walls().values().stream()
+                .flatMap(wall -> wall.triggers().stream()).distinct()
+                .map(trigger -> trigger.position().x() + "," + trigger.position().y() + "," + trigger.position().z()
+                    + "," + trigger.access().key()).collect(java.util.stream.Collectors.joining("|"))
+            + "; gems=" + stage.gems().stream()
+                .map(gem -> gem.position().x() + "," + gem.position().y() + "," + gem.position().z()
+                    + "," + gem.material() + "," + gem.access().key() + "," + gem.offsetY() + "," + gem.radius())
+                .collect(java.util.stream.Collectors.joining("|"))
             + "; goal=" + clean(stage.goal()) + "; brief=" + clean(stage.botBrief());
     }
 

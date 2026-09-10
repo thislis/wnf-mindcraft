@@ -2,6 +2,7 @@ package com.isttech.firewater.builder;
 
 import com.isttech.firewater.domain.Role;
 import com.isttech.firewater.runtime.StageManager;
+import com.isttech.firewater.runtime.RoleService;
 import com.isttech.firewater.runtime.WallService;
 import com.isttech.firewater.stage.BlockPosition;
 import com.isttech.firewater.stage.FinishDefinition;
@@ -10,6 +11,7 @@ import com.isttech.firewater.stage.StageDefinition;
 import com.isttech.firewater.stage.StageLocation;
 import com.isttech.firewater.stage.StageRepository;
 import com.isttech.firewater.stage.StageValidator;
+import com.isttech.firewater.stage.TriggerAccess;
 import com.isttech.firewater.stage.TriggerDefinition;
 import com.isttech.firewater.stage.TriggerType;
 import com.isttech.firewater.stage.WallBlockSnapshot;
@@ -47,15 +49,17 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
     private final JavaPlugin plugin;
     private final StageRepository repository;
     private final StageManager manager;
+    private final RoleService roles;
     private final WallService wallService;
     private final BuilderSelection selections;
     private final NamespacedKey wandKey;
 
     public FirewaterCommand(JavaPlugin plugin, StageRepository repository, StageManager manager,
-                            WallService wallService, BuilderSelection selections, NamespacedKey wandKey) {
+                            RoleService roles, WallService wallService, BuilderSelection selections, NamespacedKey wandKey) {
         this.plugin = plugin;
         this.repository = repository;
         this.manager = manager;
+        this.roles = roles;
         this.wallService = wallService;
         this.selections = selections;
         this.wandKey = wandKey;
@@ -70,6 +74,7 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
             }
             return switch (args[0].toLowerCase(Locale.ROOT)) {
                 case "status" -> status(sender);
+                case "role" -> role(sender, Arrays.copyOfRange(args, 1, args.length));
                 case "reload" -> reload(sender);
                 case "wand" -> wand(sender);
                 case "pos1" -> select(sender, true);
@@ -87,6 +92,42 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
 
     private boolean status(CommandSender sender) {
         sender.sendMessage("§6Firewater: §f" + manager.status());
+        showRoles(sender);
+        return true;
+    }
+
+    private void showRoles(CommandSender sender) {
+        for (Role role : Role.values()) {
+            sender.sendMessage("§e" + role.key() + " = " + roles.name(role)
+                + (roles.isManual(role) ? " (manual; OP/game mode/inventory preserved)" : " (dedicated bot)"));
+        }
+    }
+
+    private boolean role(CommandSender sender, String[] args) {
+        if (args.length == 0 || (args.length == 1 && args[0].equalsIgnoreCase("list"))) {
+            showRoles(sender);
+            return true;
+        }
+        boolean assign = args[0].equalsIgnoreCase("set") && (args.length == 2 || args.length == 3);
+        boolean clear = args[0].equalsIgnoreCase("clear") && args.length == 2;
+        if (!assign && !clear) {
+            throw new IllegalArgumentException("Usage: /fw role set <wade|ember> [player] | clear <wade|ember> | list");
+        }
+        if (manager.active().isPresent()) {
+            throw new IllegalArgumentException("Stop the active stage with /fw stage stop before changing roles.");
+        }
+        Role role = Role.parse(args[1]);
+        if (assign) {
+            Player player = args.length == 3 ? Bukkit.getPlayerExact(args[2]) : requirePlayer(sender);
+            if (player == null) throw new IllegalArgumentException("Player must be online: " + args[2]);
+            roles.assign(role, player.getName());
+            plugin.getConfig().set("manual-players." + role.key(), player.getName());
+        } else {
+            roles.clearAssignment(role);
+            plugin.getConfig().set("manual-players." + role.key(), null);
+        }
+        plugin.saveConfig();
+        showRoles(sender);
         return true;
     }
 
@@ -352,8 +393,9 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean trigger(CommandSender sender, String[] args) throws IOException {
-        if (args.length != 4 || (!args[0].equalsIgnoreCase("add") && !args[0].equalsIgnoreCase("remove"))) {
-            throw new IllegalArgumentException("Usage: /fw trigger <add|remove> <stage> <wall-id> <pad|lever|button>");
+        if ((args.length != 4 && args.length != 5)
+            || (!args[0].equalsIgnoreCase("add") && !args[0].equalsIgnoreCase("remove"))) {
+            throw new IllegalArgumentException("Usage: /fw trigger <add|remove> <stage> <wall-id> <pad|lever|button> [wade|ember|any]");
         }
         boolean remove = args[0].equalsIgnoreCase("remove");
         Player player = requirePlayer(sender);
@@ -364,16 +406,21 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
         Block block = target(player);
         TriggerType requested = TriggerType.parse(args[3]);
         TriggerType actual = inferTriggerType(block, true);
+        TriggerAccess access = args.length == 5 ? TriggerAccess.parse(args[4]) : TriggerAccess.ANY;
         if (requested != actual) throw new IllegalArgumentException("Target is " + actual.key() + ", not " + requested.key());
-        TriggerDefinition trigger = new TriggerDefinition(requested, position(block));
+        TriggerDefinition trigger = new TriggerDefinition(requested, position(block), access);
         if (remove) {
-            if (!wall.triggers().remove(trigger)) throw new IllegalArgumentException("That trigger is not registered on " + args[2] + ".");
-        } else if (!wall.triggers().contains(trigger)) {
+            boolean removed = wall.triggers().removeIf(existing ->
+                existing.type() == requested && existing.position().equals(position(block)));
+            if (!removed) throw new IllegalArgumentException("That trigger is not registered on " + args[2] + ".");
+        } else {
+            wall.triggers().removeIf(existing ->
+                existing.type() == requested && existing.position().equals(position(block)));
             wall.triggers().add(trigger);
         }
         repository.save(stage);
         sender.sendMessage("§a" + (remove ? "Removed " : "Added ") + requested.key() + " trigger "
-            + (remove ? "from " : "to ") + args[2] + ".");
+            + (remove ? "from " : "to ") + args[2] + (remove ? "." : " for " + access.key() + "."));
         return true;
     }
 
@@ -419,9 +466,9 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
                 }
             }
             visibleGate.triggers().add(new TriggerDefinition(TriggerType.PAD,
-                new BlockPosition(baseX + 3, baseY + 1, baseZ + 9)));
+                new BlockPosition(baseX + 3, baseY + 1, baseZ + 9), TriggerAccess.EMBER));
             visibleGate.triggers().add(new TriggerDefinition(TriggerType.PAD,
-                new BlockPosition(baseX + 5, baseY + 1, baseZ + 9)));
+                new BlockPosition(baseX + 5, baseY + 1, baseZ + 9), TriggerAccess.EMBER));
             stage.walls().put("plate-gate", visibleGate);
 
             WallDefinition hiddenGate = new WallDefinition(false);
@@ -430,9 +477,9 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
                     new BlockPosition(baseX + 8, baseY, z), "minecraft:blue_stained_glass"));
             }
             hiddenGate.triggers().add(new TriggerDefinition(TriggerType.LEVER,
-                new BlockPosition(baseX + 9, baseY + 1, baseZ + 2)));
+                new BlockPosition(baseX + 9, baseY + 1, baseZ + 2), TriggerAccess.WADE));
             hiddenGate.triggers().add(new TriggerDefinition(TriggerType.BUTTON,
-                new BlockPosition(baseX + 10, baseY + 1, baseZ + 2)));
+                new BlockPosition(baseX + 10, baseY + 1, baseZ + 2), TriggerAccess.WADE));
             stage.walls().put("switch-gate", hiddenGate);
 
             if (!StageValidator.validateGlobal(stage, repository.all()).isEmpty()) {
@@ -573,20 +620,25 @@ public final class FirewaterCommand implements CommandExecutor, TabCompleter {
     private void help(CommandSender sender) {
         sender.sendMessage("§6Firewater commands:");
         sender.sendMessage("§e/fw status | reload | wand | pos1 | pos2");
+        sender.sendMessage("§e/fw role set <wade|ember> [player] | clear <wade|ember> | list");
         sender.sendMessage("§e/fw stage create|create-reference|delete|enable|setbounds|setspawn|setstart|setfinish|setgoal|setbrief|sethold|setpoison|validate|start|reset|stop");
         sender.sendMessage("§e/fw wall save|delete|preview|restore <stage> <wall-id> [true|false]");
-        sender.sendMessage("§e/fw trigger add|remove <stage> <wall-id> <pad|lever|button>");
+        sender.sendMessage("§e/fw trigger add|remove <stage> <wall-id> <pad|lever|button> [wade|ember|any]");
     }
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         List<String> values = new ArrayList<>();
-        if (args.length == 1) values.addAll(List.of("help", "status", "reload", "wand", "pos1", "pos2", "stage", "wall", "trigger"));
+        if (args.length == 1) values.addAll(List.of("help", "status", "role", "reload", "wand", "pos1", "pos2", "stage", "wall", "trigger"));
+        else if (args.length == 2 && args[0].equalsIgnoreCase("role")) values.addAll(List.of("set", "clear", "list"));
+        else if (args.length == 3 && args[0].equalsIgnoreCase("role") && List.of("set", "clear").contains(args[1].toLowerCase(Locale.ROOT))) values.addAll(List.of("wade", "ember"));
+        else if (args.length == 4 && args[0].equalsIgnoreCase("role") && args[1].equalsIgnoreCase("set")) values.addAll(Bukkit.getOnlinePlayers().stream().map(Player::getName).toList());
         else if (args.length == 2 && args[0].equalsIgnoreCase("stage")) values.addAll(List.of("create", "create-reference", "delete", "enable", "setbounds", "setspawn", "setstart", "setfinish", "setgoal", "setbrief", "sethold", "setpoison", "validate", "start", "reset", "stop"));
         else if (args.length == 2 && args[0].equalsIgnoreCase("wall")) values.addAll(List.of("save", "delete", "preview", "restore"));
         else if (args.length == 2 && args[0].equalsIgnoreCase("trigger")) values.addAll(List.of("add", "remove"));
         else if (args.length == 3 && List.of("stage", "wall", "trigger").contains(args[0].toLowerCase(Locale.ROOT))) values.addAll(repository.all().stream().map(StageDefinition::id).toList());
+        else if (args.length == 6 && args[0].equalsIgnoreCase("trigger")) values.addAll(List.of("wade", "ember", "any"));
         String prefix = args[args.length - 1].toLowerCase(Locale.ROOT);
-        return values.stream().filter(value -> value.startsWith(prefix)).toList();
+        return values.stream().filter(value -> value.toLowerCase(Locale.ROOT).startsWith(prefix)).toList();
     }
 }

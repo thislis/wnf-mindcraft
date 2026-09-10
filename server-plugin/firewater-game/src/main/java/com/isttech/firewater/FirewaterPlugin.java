@@ -1,6 +1,7 @@
 package com.isttech.firewater;
 
 import com.isttech.firewater.builder.BuilderSelection;
+import com.isttech.firewater.domain.Role;
 import com.isttech.firewater.builder.FirewaterCommand;
 import com.isttech.firewater.runtime.BotMessenger;
 import com.isttech.firewater.runtime.HazardService;
@@ -29,6 +30,12 @@ public final class FirewaterPlugin extends JavaPlugin {
         RoleService roles = new RoleService(
             getConfig().getString("players.wade", "Wade"),
             getConfig().getString("players.ember", "Ember"));
+        java.util.Map<Role, String> manualPlayers = new java.util.EnumMap<>(Role.class);
+        for (Role role : Role.values()) {
+            String manualName = getConfig().getString("manual-players." + role.key());
+            if (manualName != null && !manualName.isBlank()) manualPlayers.put(role, manualName);
+        }
+        roles.loadAssignments(manualPlayers);
         StageRepository repository = new StageRepository(getDataFolder(), getLogger(), defaultPoison);
         repository.reload();
         WallService walls = new WallService(this, roles);
@@ -47,7 +54,7 @@ public final class FirewaterPlugin extends JavaPlugin {
 
         BuilderSelection selections = new BuilderSelection();
         NamespacedKey wandKey = new NamespacedKey(this, "builder_wand");
-        FirewaterCommand executor = new FirewaterCommand(this, repository, stageManager, walls, selections, wandKey);
+        FirewaterCommand executor = new FirewaterCommand(this, repository, stageManager, roles, walls, selections, wandKey);
         PluginCommand command = requireNonNull(getCommand("fw"), "Command /fw is missing from plugin.yml");
         command.setExecutor(executor);
         command.setTabCompleter(executor);

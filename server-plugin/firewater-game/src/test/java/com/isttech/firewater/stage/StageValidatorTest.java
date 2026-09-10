@@ -42,6 +42,23 @@ class StageValidatorTest {
     }
 
     @Test
+    void rejectsConflictingRoleAccessAtSharedTriggerPosition() {
+        StageDefinition stage = completeStage();
+        BlockPosition shared = new BlockPosition(8, 2, 8);
+        WallDefinition first = new WallDefinition(true);
+        first.blocks().add(new WallBlockSnapshot(new BlockPosition(7, 2, 8), "minecraft:stone"));
+        first.triggers().add(new TriggerDefinition(TriggerType.LEVER, shared, TriggerAccess.WADE));
+        WallDefinition second = new WallDefinition(false);
+        second.blocks().add(new WallBlockSnapshot(new BlockPosition(9, 2, 8), "minecraft:stone"));
+        second.triggers().add(new TriggerDefinition(TriggerType.LEVER, shared, TriggerAccess.EMBER));
+        stage.walls().put("first", first);
+        stage.walls().put("second", second);
+
+        assertTrue(StageValidator.validateStructure(stage, 240).stream()
+            .anyMatch(error -> error.contains("conflicting roles wade and ember")));
+    }
+
+    @Test
     void rejectsEnabledStageGlobalOverlapButAllowsDisabledTemplate() {
         StageDefinition candidate = completeStage();
         StageDefinition other = completeStageWithId("other");

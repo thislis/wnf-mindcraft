@@ -109,3 +109,40 @@ test('screenshot retention keeps only the newest forty JPEG captures', () => {
     entries.push('notes.txt');
     assert.deepEqual(screenshotsToPrune(entries, 40), entries.slice(0, 5));
 });
+
+test('only visible registered gems get coordinates; metadata identifies both device roles', () => {
+    for (const role of ['wade', 'ember']) {
+        const blocks = [
+            makeBlock('blue_stained_glass', 2, 64, 2),
+            makeBlock('red_stained_glass', 2, 64, 6),
+            makeBlock('emerald_block', 3, 64, 3),
+            makeBlock('blue_stained_glass', 9, 64, 9), // decoration
+            makeBlock('blue_stained_glass', 10, 64, 2), // registered but occluded
+            makeBlock('lever', 4, 64, 2), makeBlock('lever', 4, 64, 6),
+        ];
+        const gems = blocks.filter((_, i) => i < 3 || i === 4).map(block => ({
+            name: block.name, position: block.position,
+            role: block.name === 'blue_stained_glass' ? 'wade' : block.name === 'red_stained_glass' ? 'ember' : 'any',
+            offsetY: -0.5, radius: 2.1,
+        }));
+        const agent = { name: role, bot: {
+            entity: { position: new Vec3(0, 64, 0) },
+            findBlocks: options => blocks.filter(options.matching).map(b => b.position),
+            blockAt: position => blocks.find(b => b.position.equals(position)),
+            canSeeBlock: block => block.position.x !== 10,
+        }, firewater: { getObservationContext: () => ({ role, gems, interactions: [
+            { position: blocks[5].position, role: 'wade' }, { position: blocks[6].position, role: 'ember' },
+        ] }) } };
+        const vision = new VisionInterpreter(agent, true);
+        const targets = vision._collectLineOfSightTargets();
+        assert.equal(targets.filter(t => t.kind === 'gem').length, 3);
+        assert.ok(targets.every(t => t.position.x !== 9 && t.position.x !== 10));
+        const text = vision._formatLineOfSightMetadata(targets);
+        assert.match(text, /gem blue_stained_glass.*role=wade/);
+        assert.match(text, /gem red_stained_glass.*role=ember/);
+        assert.match(text, /gem emerald_block.*role=any/);
+        assert.match(text, /activator lever at \(4, 64, 2\).*role=wade/);
+        assert.match(text, /activator lever at \(4, 64, 6\).*role=ember/);
+        assert.equal(targets[0].kind, 'gem');
+    }
+});

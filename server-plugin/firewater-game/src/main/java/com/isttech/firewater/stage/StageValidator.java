@@ -36,6 +36,12 @@ public final class StageValidator {
             errors.add("finish hold ticks exceeds " + MAX_FINISH_HOLD_TICKS);
         }
 
+        Set<BlockPosition> gemPositions = new HashSet<>();
+        for (GemDefinition gem : stage.gems()) {
+            if (!gemPositions.add(gem.position())) errors.add("duplicate gem position " + gem.position());
+            if (bounds != null) requireInside(errors, bounds, gem.position(), "gem");
+            if (stage.poisonMaterials().contains(gem.material())) errors.add("gem material is poison");
+        }
         if (bounds != null) {
             // The start control panel is intentionally allowed outside the play bounds.
             stage.spawns().forEach((role, location) -> {
@@ -91,12 +97,18 @@ public final class StageValidator {
             addExclusive(errors, exclusivePositions, stage.startTrigger().position(), "start trigger");
         }
         Map<BlockPosition, TriggerType> triggerTypes = new HashMap<>();
+        Map<BlockPosition, TriggerAccess> triggerAccess = new HashMap<>();
         for (Map.Entry<String, WallDefinition> wall : stage.walls().entrySet()) {
             for (TriggerDefinition trigger : wall.getValue().triggers()) {
                 TriggerType previousType = triggerTypes.putIfAbsent(trigger.position(), trigger.type());
                 if (previousType != null && previousType != trigger.type()) {
                     errors.add("trigger at " + trigger.position() + " has conflicting types " + previousType.key()
                         + " and " + trigger.type().key());
+                }
+                TriggerAccess previousAccess = triggerAccess.putIfAbsent(trigger.position(), trigger.access());
+                if (previousAccess != null && previousAccess != trigger.access()) {
+                    errors.add("trigger at " + trigger.position() + " has conflicting roles " + previousAccess.key()
+                        + " and " + trigger.access().key());
                 }
                 String exclusive = exclusivePositions.get(trigger.position());
                 if (exclusive != null) {

@@ -1,7 +1,6 @@
 package com.isttech.firewater;
 
 import com.isttech.firewater.builder.BuilderSelection;
-import com.isttech.firewater.domain.Role;
 import com.isttech.firewater.domain.SessionState;
 import com.isttech.firewater.runtime.RoleService;
 import com.isttech.firewater.runtime.StageManager;
@@ -55,10 +54,10 @@ public final class FirewaterListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
-        if (event.getHand() != null && event.getHand() != EquipmentSlot.HAND) return;
         Block clicked = event.getClickedBlock();
         if (clicked == null) return;
         if (isWand(event.getItem())) {
+            if (event.getHand() != EquipmentSlot.HAND) return;
             if (event.getAction() == Action.LEFT_CLICK_BLOCK) {
                 selections.setFirst(event.getPlayer().getUniqueId(), position(clicked), clicked.getWorld().getName());
                 event.getPlayer().sendMessage("§aFirewater pos1: " + position(clicked));
@@ -71,19 +70,22 @@ public final class FirewaterListener implements Listener {
             return;
         }
         BlockPosition clickedPosition = position(clicked);
-        boolean participant = roles.roleOf(event.getPlayer()).isPresent();
+        boolean participant = roles.isDedicated(event.getPlayer());
         if (manager.active().isPresent()) {
             boolean registeredUse = event.getAction() == Action.RIGHT_CLICK_BLOCK
                 && manager.isRegisteredInteraction(event.getPlayer(), clicked.getWorld().getName(), clickedPosition);
             boolean registeredPad = event.getAction() == Action.PHYSICAL
                 && manager.isRegisteredPad(event.getPlayer(), clicked.getWorld().getName(), clickedPosition);
-            if ((participant || manager.protects(clicked.getWorld().getName(), clickedPosition))
+            boolean protectedInteraction = roles.isManual(event.getPlayer())
+                ? manager.isStageControl(clicked.getWorld().getName(), clickedPosition)
+                : manager.protects(clicked.getWorld().getName(), clickedPosition);
+            if ((participant || protectedInteraction)
                 && !registeredUse && !registeredPad) {
                 event.setCancelled(true);
                 return;
             }
         }
-        if (event.getAction() != Action.RIGHT_CLICK_BLOCK || roles.roleOf(event.getPlayer()).isPresent()) return;
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK || roles.isDedicated(event.getPlayer())) return;
         for (StageDefinition stage : repository.all()) {
             if (!stage.enabled() || stage.startTrigger() == null || !stage.world().equals(clicked.getWorld().getName())) continue;
             if (stage.startTrigger().position().equals(position(clicked))) {
@@ -200,7 +202,7 @@ public final class FirewaterListener implements Listener {
     }
 
     private boolean blocksPlayerChange(Player player, BlockPosition position, String world) {
-        boolean activeParticipant = roles.roleOf(player).isPresent() && manager.active()
+        boolean activeParticipant = roles.isDedicated(player) && manager.active()
             .filter(session -> session.state() == SessionState.RUNNING || session.state() == SessionState.RESETTING)
             .isPresent();
         return activeParticipant || manager.protects(world, position);
