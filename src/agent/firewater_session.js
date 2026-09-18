@@ -1,5 +1,6 @@
 import convoManager from './conversation.js';
 import { parseTargetContracts, targetPriority } from './library/firewater_targets.js';
+import { FirewaterHumanControl } from './firewater_human_control.js';
 
 const FIREWATER_PREFIX = /\[FWG:(START|RESET|CLEAR|ABORT)\]/i;
 const FIREWATER_ROLES = new Set(['wade', 'ember']);
@@ -114,7 +115,7 @@ function interpolateAxis(min, max, fraction) {
  * Try nearby unvisited viewpoints before distant stage anchors. Reachability
  * is checked against the loaded world before navigation starts.
  */
-export function planFirewaterExploration(bounds, current, visited = [], role = 'wade', minDistance = 8, hints = []) {
+export function planFirewaterExploration(bounds, current, visited = [], role = 'wade', minDistance = 8, hints = [], openings = []) {
     if (!bounds?.min || !bounds?.max || !current) return [];
     const known = [...visited, current].map(point => ({
         x: Number(point.x), y: Number(point.y), z: Number(point.z),
@@ -159,24 +160,37 @@ export function planFirewaterExploration(bounds, current, visited = [], role = '
         })
     ));
     const seen = new Set();
-    const useful = hints.filter(target => targetPriority(target, role) < 3);
+    // Safe liquid is traversable terrain, not an objective to keep revisiting.
+    const useful = hints.filter(target => targetPriority(target, role) < 2);
     const approaches = useful.map(target => ({
         x: target.position.x, y: target.kind === 'gem' ? Math.floor(target.position.y + target.offsetY) : currentY,
         z: target.position.z,
     })).filter(p => p.y >= bounds.min.y && p.y <= bounds.max.y);
     const interest = target => useful.length ? Math.min(...useful.map(hint =>
         targetPriority(hint, role) * 24 + pointDistance(target, hint.position))) : 0;
-    return [...approaches, ...local, ...distant].filter(target => {
+    const throughOpenings = openings.flatMap(opening => {
+        const dx = opening.x - current.x;
+        const dz = opening.z - current.z;
+        const length = Math.hypot(dx, dz) || 1;
+        // Aim beyond the changed wall so GoalNear's radius cannot stop before it.
+        return [...new Set([currentY, opening.y])].map(y => ({
+            x: Math.round(opening.x + dx / length * 4), y,
+            z: Math.round(opening.z + dz / length * 4), opening,
+        }));
+    }).filter(target => ['x', 'y', 'z'].every(axis =>
+        target[axis] >= bounds.min[axis] && target[axis] <= bounds.max[axis]));
+    return [...throughOpenings, ...approaches, ...local, ...distant].filter(target => {
         const key = `${target.x},${target.y},${target.z}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
     }).map(target => ({
         x: target.x, y: target.y, z: target.z,
+        ...(target.opening ? { opening: target.opening } : {}),
         novelty: Math.min(...known.map(point => pointDistance(target, point))),
         distance: pointDistance(current, target),
-    })).filter(target => target.novelty >= requiredNovelty + 2)
-        .sort((a, b) => (a.distance + interest(a) * 2) - (b.distance + interest(b) * 2) || b.novelty - a.novelty)
+    })).filter(target => target.opening || target.novelty >= requiredNovelty + 2)
+        .sort((a, b) => Number(!!b.opening) - Number(!!a.opening) || (a.distance + interest(a) * 2) - (b.distance + interest(b) * 2) || b.novelty - a.novelty)
         .map(({ distance, ...target }) => target);
 }
 
@@ -230,6 +244,7 @@ export class FirewaterSession {
         this.lifecycle = 'idle';
         this.session = null;
         this.generation = 0;
+        this.humanControl = new FirewaterHumanControl(this);
         this.planningTimer = null;
         this.eventQueue = Promise.resolve();
         this.conversationSequence = 0;
@@ -349,6 +364,7 @@ export class FirewaterSession {
             this.role,
             minDistance,
             this.agent.vision_interpreter?.getExplorationHints?.() || [],
+            this.exploration.openings,
         ).filter(target => !this.exploration.failedTargets.some(failure =>
             pointDistance(current, failure.origin) < 3 &&
             pointDistance(target, failure.target) < 1
@@ -373,19 +389,33 @@ export class FirewaterSession {
             p.y < bounds.min.y || p.y > bounds.max.y ||
             p.z < bounds.min.z || p.z > bounds.max.z) return;
         this.exploration.failedTargets = [];
+        if (newBlock.boundingBox === 'block') this.exploration.openings = this.exploration.openings.filter(point =>
+            pointDistance(point, p) >= 3);
+        const removedGem = this.session.gems?.some(gem => pointDistance(gem.position, p) < 0.1);
+        if (oldBlock.boundingBox === 'block' && newBlock.boundingBox === 'empty' &&
+            ['air', 'cave_air'].includes(newBlock.name) && !removedGem) {
+            const opening = { x: p.x, y: p.y, z: p.z };
+            if (!this.exploration.openings.some(point => pointDistance(point, opening) < 3)) {
+                this.exploration.openings.push(opening);
+                if (this.exploration.openings.length > 24) this.exploration.openings.shift();
+            }
+        }
     }
 
     hasPendingExplorationObservation() {
         return this.exploration.pendingObservation;
     }
 
-    recordExplorationViewpoint(start, end, minDistance) {
+    recordExplorationViewpoint(start, end, minDistance, target = null) {
         const moved = pointDistance(start, end);
         const novelty = this.exploration.visited.length === 0
             ? moved
             : Math.min(...this.exploration.visited.map(point => pointDistance(point, end)));
         const requiredNovelty = Math.max(3, Math.min(8, minDistance * 0.6));
-        if (moved < requiredNovelty || novelty < requiredNovelty) return false;
+        const crossedOpening = target?.opening && pointDistance(end, target) <= 3;
+        if (!crossedOpening && (moved < requiredNovelty || novelty < requiredNovelty)) return false;
+        if (crossedOpening) this.exploration.openings = this.exploration.openings.filter(point =>
+            pointDistance(point, target.opening) >= 3);
         this._rememberViewpoint(end);
         this.exploration.pendingObservation = true;
         return true;
@@ -649,10 +679,14 @@ export class FirewaterSession {
             `Reach and hold the ${exit} while ${partner} holds their matching exit for ${this.session.holdTicks} server ticks.`,
             `After required gems are collected and route devices are complete, your final destination is the observed ${exitMaterial.replaceAll('_', ' ')} block.`,
             'Use !observeFirewater before coordinate actions, then use !collectGemAt for your registered gems, !activateBlockAt for allowed levers/buttons, or !standOnBlock for allowed plates/your exit with exact recently observed coordinates.',
-            'If a still-needed plate, lever, button, gem, exit, or relevant wall/opening is not visible, do not repeat observation from the same place. Use !exploreFirewater(8), then !observeFirewater from the new viewpoint; the command prioritizes observed own gems, allowed devices, and your safe liquid before other unvisited viewpoints. If a registered own gem is visible, use !collectGemAt instead of continuing blind exploration.',
-            `Do not ask ${partner} where a target is at the beginning. First explore and observe at least ${FIREWATER_EXPLORATIONS_BEFORE_INTEL} distinct new viewpoints. Only after that may either bot use !startConversation to request a still-missing target or proactively report a target the partner likely needs.`,
+            'If a still-needed plate, lever, button, gem, exit, or relevant wall/opening is not visible, do not repeat observation from the same place. Use !exploreFirewater(8), then !observeFirewater from the new viewpoint; the command prioritizes newly opened passages, observed own gems, and allowed devices before other unvisited viewpoints. Safe liquid is traversable terrain, not a reason to stay in the starting area. If a registered own gem is visible, use !collectGemAt instead of continuing blind exploration.',
+            `Do not ask ${partner} where a target is at the beginning. First explore and observe at least ${FIREWATER_EXPLORATIONS_BEFORE_INTEL} distinct new viewpoints. Only after that may you request a still-missing target or proactively report a target the partner likely needs, using ordinary chat for humans or !startConversation for bots.`,
             'An intelligence request must say what you still need, what useful objects/routes you saw, and which areas you already searched. The reply must state whether the target is visible or last seen, give direction/observed coordinates when available, and divide the remaining search area. Partner coordinates are clues only; re-observe yourself before any coordinate action.',
-            'After a device opens a route, do not toggle another device unless the route is still blocked or a new failure requires replanning.',
+            'After a device opens a route, re-observe and explore through the opening before revisiting the starting area. Do not toggle another device unless the route is still blocked or a new failure requires replanning.',
+            'A direct human instruction takes priority over autonomous exploration. Approach the speaker with !goToPlayer, then observe any requested plate/device and act using its allowed coordinates. Stay after a requested arrival or plate hold; resume autonomous play only when asked.',
+            this.conversationManager.isOtherAgent(partner)
+                ? 'Your partner is a bot: use the bounded bot conversation protocol.'
+                : `${partner} is a HUMAN: ask or answer them in ordinary chat. Never use !startConversation or !endConversation for them. The three-viewpoint threshold limits unsolicited location requests, not responses to their instructions.`,
             'Preserve puzzle blocks, use only legitimate movement/interactions, and coordinate concise next actions.',
             'Never call !endGoal or claim success before the server sends FWG CLEAR.',
         ].join(' ');
@@ -664,7 +698,14 @@ export class FirewaterSession {
     }
 
     _scheduleWadePlanning(reason) {
-        if (!this.isConversationLead() || this.planningDelayMs < 0) return;
+        if (this.planningDelayMs < 0) return;
+        if (!this.conversationManager.isOtherAgent(this.getPartnerName())) {
+            // Human partners cannot participate in the bot-to-bot handshake.
+            if (!this.humanControl.request && !this.humanControl.holding)
+                this.agent.self_prompter.start();
+            return;
+        }
+        if (!this.isConversationLead()) return;
         const generation = this.generation;
         const stage = this.session.stage;
         const attempt = this.session.attempt;
@@ -728,7 +769,10 @@ export class FirewaterSession {
     }
 
     _resetExplorationState() {
+        this.humanControl.holding = false;
+        this.humanControl.resumeRequested = false;
         this.exploration = {
+            openings: [],
             visited: [],
             failedTargets: [],
             observedSinceIntel: 0,

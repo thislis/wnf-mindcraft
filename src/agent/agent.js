@@ -198,7 +198,7 @@ export class Agent {
                 }
                 else {
                     let translation = await handleEnglishTranslation(message);
-                    this.handleMessage(username, translation);
+                    await this.handleMessage(username, translation);
                 }
             } catch (error) {
                 console.error('Error handling message:', error);
@@ -280,6 +280,16 @@ export class Agent {
     }
 
     async handleMessage(source, message, max_responses=null) {
+        const human = source && message && source !== 'system' && source !== this.name &&
+            !convoManager.isOtherAgent(source);
+        if (human && this.firewater?.isRunning()) {
+            return this.firewater.humanControl.run(source, message, () =>
+                this._handleMessage(source, message, max_responses ?? 6));
+        }
+        return this._handleMessage(source, message, max_responses);
+    }
+
+    async _handleMessage(source, message, max_responses=null) {
         await this.checkTaskDone();
         if (!source || !message) {
             console.warn('Received empty message from', source);
@@ -346,6 +356,7 @@ export class Agent {
             if (checkInterrupt()) break;
             let history = this.history.getHistory();
             let res = await this.prompter.promptConvo(history);
+            if (checkInterrupt()) break;
 
             console.log(`${this.name} full response to ${source}: ""${res}""`);
 
@@ -404,6 +415,11 @@ export class Agent {
             }
             
             this.history.save();
+            if (i === max_responses - 1 && this.firewater?.humanControl.request) {
+                // A multi-step human request hit its turn budget. Do not wander
+                // away before the player can clarify or continue the request.
+                this.firewater.humanControl.hold();
+            }
         }
 
         return used_command;

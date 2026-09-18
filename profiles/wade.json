@@ -1,7 +1,7 @@
 {
     "name": "Wade",
-    "model": "openai-codex/gpt-5.5",
-    "vision_model": "openai-codex/gpt-5.5",
+    "model": "openai-codex/gpt-5.6-terra",
+    "vision_model": "openai-codex/gpt-5.6-terra",
     "firewater_role": "wade",
     "firewater_partner": "Ember",
     "firewater_conversation_message_limit": 4,

@@ -199,6 +199,7 @@ test('trusted START participant names override profile partner and lead fallback
     wade.name = 'AquaLead';
     wade.prompter.profile.firewater_partner = 'LegacyEmber';
     const wadeConversations = makeFakeConversationManager();
+    wadeConversations.isOtherAgent = name => name === 'FlameMate';
     const wadeSession = new FirewaterSession(wade, {
         conversationManager: wadeConversations,
         planningDelayMs: 0,
@@ -960,13 +961,12 @@ test('gem stages expose collection commands and enforce gem/device ownership for
     }
 });
 
-test('both roles explore toward observed own gems and their safe liquid instead of the opposite lane', () => {
+test('both roles explore toward observed own gems and devices instead of the opposite lane', () => {
     const bounds = { min: { x: 1600, y: -64, z: 0 }, max: { x: 1674, y: -46, z: 30 } };
     for (const [role, z, liquid] of [['wade', 7, 'water'], ['ember', 23, 'lava']]) {
         const current = { x: 1604, y: -60, z: 15 };
         for (const hint of [
             { kind: 'gem', role, offsetY: -0.5, position: { x: 1614, y: -59, z } },
-            { kind: 'hazard', name: liquid, position: { x: 1614, y: -61, z } },
             { kind: 'activator', role, position: { x: 1621, y: -60, z } },
         ]) {
             const first = planFirewaterExploration(bounds, current, [], role, 8, [hint])[0];
@@ -974,4 +974,59 @@ test('both roles explore toward observed own gems and their safe liquid instead 
             assert.ok(role === 'wade' ? first.z < current.z : first.z > current.z);
         }
     }
+});
+
+
+test('human partner starts autonomous play without a bot handshake', async () => {
+    const agent = makeAgent('wade');
+    const conversations = makeFakeConversationManager();
+    const session = new FirewaterSession(agent, { conversationManager: conversations, planningDelayMs: 0 });
+    await session.handleRawMessage('Server', '[FWG:START] session=human; stage=gems; wade-player=Wade; ember-player=AL_Gamja; goal=Collect gems');
+    assert.equal(conversations.starts.length, 0);
+    assert.equal(agent.self_prompter.startArgs.length, 1);
+    assert.match(agent.self_prompter.prompt, /AL_Gamja is a HUMAN/);
+    assert.match(agent.self_prompter.prompt, /direct human instruction takes priority/);
+});
+
+test('visited safe water does not attract exploration back toward the starting pool', () => {
+    const bounds = { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } };
+    const current = { x: 20, y: 64, z: 20 };
+    const pool = { kind: 'hazard', name: 'water', position: { x: 5, y: 63, z: 5 } };
+    assert.deepEqual(planFirewaterExploration(bounds, current, [], 'wade', 8, [pool]),
+        planFirewaterExploration(bounds, current, [], 'wade', 8));
+});
+
+test('opening a wall prioritizes crossing it even through previously visited space', () => {
+    const agent = makeAgent('wade');
+    const session = new FirewaterSession(agent, { planningDelayMs: -1 });
+    session.lifecycle = 'running';
+    session.session = { bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } } };
+    const current = new Vec3(10, 64, 10);
+    const wall = new Vec3(13, 64, 10);
+    session.exploration.visited.push({ x: 17, y: 64, z: 10 });
+    session.handleExplorationBlockUpdate(
+        { type: 1, stateId: 1, boundingBox: 'block' },
+        { type: 0, stateId: 0, name: 'air', boundingBox: 'empty', position: wall });
+    const target = session.prepareExploration(current, 8)[0];
+    assert.deepEqual(target.opening, { x: 13, y: 64, z: 10 });
+    assert.ok(target.x > wall.x + 2, 'target must be beyond the near-goal stopping radius');
+    assert.equal(session.recordExplorationViewpoint(current, new Vec3(target.x, target.y, target.z), 8, target), true);
+    assert.equal(session.exploration.openings.length, 0);
+    assert.equal(session.hasPendingExplorationObservation(), true);
+});
+
+test('gem removal and fluid updates do not invent opened passages, and closed walls invalidate them', () => {
+    const session = new FirewaterSession(makeAgent(), { planningDelayMs: -1 });
+    session.lifecycle = 'running';
+    const position = new Vec3(13, 64, 10);
+    session.session = { bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } }, gems: [{ position }] };
+    const solid = { type: 1, stateId: 1, boundingBox: 'block', position };
+    const air = { type: 0, stateId: 0, name: 'air', boundingBox: 'empty', position };
+    session.handleExplorationBlockUpdate(solid, air);
+    assert.equal(session.exploration.openings.length, 0);
+    session.session.gems = [];
+    session.handleExplorationBlockUpdate(solid, air);
+    assert.equal(session.exploration.openings.length, 1);
+    session.handleExplorationBlockUpdate(air, solid);
+    assert.equal(session.exploration.openings.length, 0);
 });

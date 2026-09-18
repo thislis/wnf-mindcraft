@@ -2,6 +2,7 @@ import * as skills from '../library/skills.js';
 import settings from '../settings.js';
 import { collectObservedGem } from '../library/firewater_targets.js';
 import { findReachableExplorationTarget } from '../library/firewater_exploration.js';
+import { approachFirewaterPlayer } from '../library/firewater_player.js';
 import convoManager from '../conversation.js';
 import { Vec3 } from 'vec3';
 import { canSeeFirewaterTarget } from '../vision/vision_interpreter.js';
@@ -90,6 +91,7 @@ export const actionsList = [
             agent.clearBotLogs();
             agent.actions.cancelResume();
             agent.bot.emit('idle');
+            if (agent.firewater?.humanControl?.request) agent.firewater.humanControl.hold();
             let msg = 'Agent stopped.';
             if (agent.self_prompter.isActive())
                 msg += ' Self-prompting still active.';
@@ -128,8 +130,32 @@ export const actionsList = [
             'closeness': {type: 'float', description: 'How close to get to the player.', domain: [0, Infinity]}
         },
         perform: runAsAction(async (agent, player_name, closeness) => {
+            if (agent.firewater?.isRunning()) {
+                skills.log(agent.bot, await approachFirewaterPlayer(agent, player_name, closeness, skills.goToGoal));
+                return;
+            }
             await skills.goToPlayer(agent.bot, player_name, closeness);
         })
+    },
+    {
+        name: '!waitForInstructions',
+        description: 'Pause autonomous Firewater play and hold position until the human gives another instruction.',
+        perform: async function(agent) {
+            if (!agent.firewater?.isRunning()) return 'No Firewater stage is active.';
+            agent.firewater.humanControl.hold();
+            await agent.actions.stop();
+            agent.actions.cancelResume();
+            return 'Holding position. Autonomous play is paused until the human asks to resume.';
+        }
+    },
+    {
+        name: '!resumeFirewater',
+        description: 'Resume the existing server-owned stage goal when the human asks to continue autonomous play.',
+        perform: function(agent) {
+            if (!agent.firewater?.isRunning()) return 'No Firewater stage is active.';
+            agent.firewater.humanControl.resume();
+            return 'Autonomous Firewater play will resume after this reply.';
+        }
     },
     {
         name: '!followPlayer',
@@ -450,7 +476,7 @@ export const actionsList = [
         },
         perform: async function (agent, player_name, message) {
             if (!convoManager.isOtherAgent(player_name))
-                return player_name + ' is not a bot, cannot start conversation.';
+                return player_name + ' is a human. Speak to them in ordinary chat without !startConversation or !endConversation.';
             if (agent.firewater?.isRunning() && !agent.firewater.canInitiateConversation(player_name)) {
                 return `Explore and observe at least 3 distinct new viewpoints before asking ${agent.firewater.getPartnerName()} for Firewater target information.`;
             }
@@ -541,7 +567,7 @@ export const actionsList = [
             if (target) {
                 await skills.goToPosition(agent.bot, target.x, target.y, target.z, 2);
                 const end = agent.bot.entity.position.clone();
-                if (agent.firewater.recordExplorationViewpoint(start, end, distance)) {
+                if (agent.firewater.recordExplorationViewpoint(start, end, distance, target)) {
                     skills.log(
                         agent.bot,
                         `Reached unvisited viewpoint ${end.floored()} toward nearby target (${target.x}, ${target.y}, ${target.z}). Run !observeFirewater now.`
@@ -611,6 +637,7 @@ export const actionsList = [
             'z': { type: 'int', description: 'Observed block z coordinate.' }
         },
         perform: runAsAction(async (agent, x, y, z) => {
+            if (agent.firewater?.humanControl?.request) agent.firewater.humanControl.hold();
             const authorized = validateObservedCoordinateTarget(agent, x, y, z, 'stand');
             if (authorized.error) {
                 skills.log(agent.bot, authorized.error);
