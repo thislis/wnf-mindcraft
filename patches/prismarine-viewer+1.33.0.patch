@@ -1,31 +1,38 @@
 diff --git a/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js b/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js
-index 8945452..ac67287 100644
 --- a/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js
 +++ b/node_modules/prismarine-viewer/viewer/lib/entity/Entity.js
-@@ -203,7 +203,7 @@ function getMesh (texture, jsonModel) {
+@@ -203,7 +203,7 @@
  class Entity {
    constructor (version, type, scene) {
      const e = entities[type]
 -    if (!e) throw new Error(`Unknown entity ${type}`)
 +    if (!e) return; //throw new Error(`Unknown entity ${type}`)
- 
+
      this.mesh = new THREE.Object3D()
      for (const [name, jsonModel] of Object.entries(e.geometry)) {
 diff --git a/node_modules/prismarine-viewer/viewer/lib/models.js b/node_modules/prismarine-viewer/viewer/lib/models.js
-index 9f8938e..73d432a 100644
 --- a/node_modules/prismarine-viewer/viewer/lib/models.js
 +++ b/node_modules/prismarine-viewer/viewer/lib/models.js
-@@ -241,5 +241,4 @@ function renderElement (world, cursor, element, doAO, attr, globalMatrix, global
+@@ -130,7 +130,6 @@
+     if (!neighbor) continue
+     if (neighbor.type === type) continue
+     if ((neighbor.isCube && !isUp) || neighbor.material === 'plant' || neighbor.getProperties().waterlogged) continue
+-    if (neighbor.position.y < 0) continue
+
+     let tint = [1, 1, 1]
+     if (water) {
+@@ -241,7 +240,6 @@
        if (!neighbor) continue
        if (cullIfIdentical && neighbor.type === block.type) continue
        if (!neighbor.transparent && neighbor.isCube) continue
 -      if (neighbor.position.y < 0) continue
      }
+
+     const minx = element.from[0]
 diff --git a/node_modules/prismarine-viewer/viewer/lib/worker.js b/node_modules/prismarine-viewer/viewer/lib/worker.js
-index b743167..bb33a98 100644
 --- a/node_modules/prismarine-viewer/viewer/lib/worker.js
 +++ b/node_modules/prismarine-viewer/viewer/lib/worker.js
-@@ -32,7 +32,7 @@ function setSectionDirty (pos, value = true) {
+@@ -32,7 +32,7 @@
    if (!value) {
      delete dirtySections[key]
      postMessage({ type: 'sectionFinished', key })
@@ -34,7 +41,7 @@ index b743167..bb33a98 100644
      dirtySections[key] = value
    } else {
      postMessage({ type: 'sectionFinished', key })
-@@ -74,7 +74,7 @@ setInterval(() => {
+@@ -74,7 +74,7 @@
      y = parseInt(y, 10)
      z = parseInt(z, 10)
      const chunk = world.getColumn(x, z)
@@ -44,10 +51,38 @@ index b743167..bb33a98 100644
        const geometry = getSectionGeometry(x, y, z, world, blocksStates)
        const transferable = [geometry.positions.buffer, geometry.normals.buffer, geometry.colors.buffer, geometry.uvs.buffer]
 diff --git a/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js b/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js
-index 744224a..d93b1ce 100644
 --- a/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js
 +++ b/node_modules/prismarine-viewer/viewer/lib/worldrenderer.js
-@@ -112,7 +112,7 @@ class WorldRenderer {
+@@ -75,8 +75,9 @@
+     }
+   }
+
+-  setVersion (version) {
++  setVersion (version, assetVersion = version) {
+     this.version = version
++    this.assetVersion = assetVersion
+     this.resetWorld()
+     this.active = true
+     for (const worker of this.workers) {
+@@ -87,7 +88,7 @@
+   }
+
+   updateTexturesData () {
+-    loadTexture(this.texturesDataUrl || `textures/${this.version}.png`, texture => {
++    loadTexture(this.texturesDataUrl || `textures/${this.assetVersion}.png`, texture => {
+       texture.magFilter = THREE.NearestFilter
+       texture.minFilter = THREE.NearestFilter
+       texture.flipY = false
+@@ -97,7 +98,7 @@
+     const loadBlockStates = () => {
+       return new Promise(resolve => {
+         if (this.blockStatesData) return resolve(this.blockStatesData)
+-        return loadJSON(`blocksStates/${this.version}.json`, resolve)
++        return loadJSON(`blocksStates/${this.assetVersion}.json`, resolve)
+       })
+     }
+     loadBlockStates().then((blockStates) => {
+@@ -112,7 +113,7 @@
      for (const worker of this.workers) {
        worker.postMessage({ type: 'chunk', x, z, chunk })
      }
@@ -56,7 +91,7 @@ index 744224a..d93b1ce 100644
        const loc = new Vec3(x, y, z)
        this.setSectionDirty(loc)
        this.setSectionDirty(loc.offset(-16, 0, 0))
-@@ -127,7 +127,7 @@ class WorldRenderer {
+@@ -127,7 +128,7 @@
      for (const worker of this.workers) {
        worker.postMessage({ type: 'unloadChunk', x, z })
      }
@@ -65,3 +100,27 @@ index 744224a..d93b1ce 100644
        this.setSectionDirty(new Vec3(x, y, z), false)
        const key = `${x},${y},${z}`
        const mesh = this.sectionMeshs[key]
+diff --git a/node_modules/prismarine-viewer/viewer/lib/viewer.js b/node_modules/prismarine-viewer/viewer/lib/viewer.js
+--- a/node_modules/prismarine-viewer/viewer/lib/viewer.js
++++ b/node_modules/prismarine-viewer/viewer/lib/viewer.js
+@@ -38,16 +38,16 @@
+   }
+
+   setVersion (version) {
+-    version = getVersion(version)
+-    if (version === null) {
++    const assetVersion = getVersion(version)
++    if (assetVersion === null) {
+       const msg = `${version} is not supported`
+       window.alert(msg)
+       console.log(msg)
+       return false
+     }
+-    console.log('Using version: ' + version)
++    console.log('Using world version: ' + version + ', assets: ' + assetVersion)
+     this.version = version
+-    this.world.setVersion(version)
++    this.world.setVersion(version, assetVersion)
+     this.entities.clear()
+     this.primitives.clear()
+     return true

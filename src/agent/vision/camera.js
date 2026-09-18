@@ -8,6 +8,7 @@ import fs from 'fs/promises';
 import { Vec3 } from 'vec3';
 import { EventEmitter } from 'events';
 import { screenshotsToPrune } from './screenshot_retention.js';
+import { waitForWorldRender } from './render_readiness.js';
 
 import worker_threads from 'worker_threads';
 global.Worker = worker_threads.Worker;
@@ -24,11 +25,16 @@ export class Camera extends EventEmitter {
         this.viewDistance = options.viewDistance ?? 16;
         this.maxScreenshots = options.maxScreenshots ?? 40;
         this.captureSequence = 0;
+        this.renderTimeoutMs = options.renderTimeoutMs ?? 15_000;
+        this.renderError = null;
         this.width = 800;
         this.height = 512;
         this.canvas = createCanvas(this.width, this.height);
         this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas });
         this.viewer = new Viewer(this.renderer);
+        for (const worker of this.viewer.world.workers) {
+            worker.on('error', error => { this.renderError = error; });
+        }
         this.readyPromise = this._init().then(() => {
             this.emit('ready');
         }).catch(error => {
@@ -44,7 +50,9 @@ export class Camera extends EventEmitter {
     async _init () {
         const botPos = this.bot.entity.position;
         const center = new Vec3(botPos.x, botPos.y+this.bot.entity.height, botPos.z);
-        this.viewer.setVersion(this.bot.version);
+        if (!this.viewer.setVersion(this.bot.version)) {
+            throw new Error(`Screenshot viewer does not support Minecraft ${this.bot.version}.`);
+        }
         // Load world
         const worldView = new WorldView(this.bot.world, this.viewDistance, center);
         this.viewer.listen(worldView);
@@ -55,11 +63,20 @@ export class Camera extends EventEmitter {
   
     async capture() {
         await this.waitUntilReady();
-        const center = new Vec3(this.bot.entity.position.x, this.bot.entity.position.y+this.bot.entity.height, this.bot.entity.position.z);
-        this.viewer.camera.position.set(center.x, center.y, center.z);
+        const position = this.bot.entity.position.clone();
+        const center = position.offset(0, this.bot.entity.eyeHeight || 1.62, 0);
+        const { yaw, pitch } = this.bot.entity;
         await this.worldView.updatePosition(center);
-        this.viewer.setFirstPersonCamera(this.bot.entity.position, this.bot.entity.yaw, this.bot.entity.pitch);
+        await waitForWorldRender(this.viewer.world, center, {
+            timeoutMs: this.renderTimeoutMs,
+            isInterrupted: () => this.bot.interrupt_code,
+            getError: () => this.renderError,
+        });
+        // Screenshots need an exact eye position, not the browser's animated
+        // transition between positions (which can still point at the old floor).
+        this.viewer.setFirstPersonCamera(null, yaw, pitch);
         this.viewer.update();
+        this.viewer.camera.position.copy(center);
         this.renderer.render(this.viewer.scene, this.viewer.camera);
 
         const imageStream = this.canvas.createJPEGStream({
