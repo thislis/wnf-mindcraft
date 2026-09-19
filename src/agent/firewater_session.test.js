@@ -977,43 +977,72 @@ test('both roles explore toward observed own gems and devices instead of the opp
 });
 
 
-test('human partner starts autonomous play without a bot handshake', async () => {
-    const agent = makeAgent('wade');
-    const conversations = makeFakeConversationManager();
-    const session = new FirewaterSession(agent, { conversationManager: conversations, planningDelayMs: 0 });
-    await session.handleRawMessage('Server', '[FWG:START] session=human; stage=gems; wade-player=Wade; ember-player=AL_Gamja; goal=Collect gems');
-    assert.equal(conversations.starts.length, 0);
-    assert.equal(agent.self_prompter.startArgs.length, 1);
-    assert.match(agent.self_prompter.prompt, /AL_Gamja is a HUMAN/);
-    assert.match(agent.self_prompter.prompt, /direct human instruction takes priority/);
-});
+for (const role of ['wade', 'ember']) {
+    const name = role === 'wade' ? 'Wade' : 'Ember';
+    const partnerRole = role === 'wade' ? 'ember' : 'wade';
+    const liquid = role === 'wade' ? 'water' : 'lava';
 
-test('visited safe water does not attract exploration back toward the starting pool', () => {
-    const bounds = { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } };
-    const current = { x: 20, y: 64, z: 20 };
-    const pool = { kind: 'hazard', name: 'water', position: { x: 5, y: 63, z: 5 } };
-    assert.deepEqual(planFirewaterExploration(bounds, current, [], 'wade', 8, [pool]),
-        planFirewaterExploration(bounds, current, [], 'wade', 8));
-});
+    test(`${name} starts and resets with a human partner without a bot handshake`, async () => {
+        const agent = makeAgent(role);
+        const conversations = makeFakeConversationManager();
+        const session = new FirewaterSession(agent, { conversationManager: conversations, planningDelayMs: 0 });
+        await session.handleRawMessage('Server', `[FWG:START] session=human; stage=exits; ${role}-player=${name}; ${partnerRole}-player=AL_Gamja; goal=Reach both exits`);
+        assert.equal(conversations.starts.length, 0);
+        assert.equal(agent.self_prompter.startArgs.length, 1);
+        assert.match(agent.self_prompter.prompt, /AL_Gamja is a HUMAN/);
+        assert.match(agent.self_prompter.prompt, /direct human instruction takes priority/);
+        assert.match(agent.self_prompter.prompt, /absence of gems does not imply a plate or switch prerequisite/);
+        assert.doesNotMatch(agent.self_prompter.prompt, /until Wade reports|When Ember is holding|Only then leave the plate/);
 
-test('opening a wall prioritizes crossing it even through previously visited space', () => {
-    const agent = makeAgent('wade');
-    const session = new FirewaterSession(agent, { planningDelayMs: -1 });
-    session.lifecycle = 'running';
-    session.session = { bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } } };
-    const current = new Vec3(10, 64, 10);
-    const wall = new Vec3(13, 64, 10);
-    session.exploration.visited.push({ x: 17, y: 64, z: 10 });
-    session.handleExplorationBlockUpdate(
-        { type: 1, stateId: 1, boundingBox: 'block' },
-        { type: 0, stateId: 0, name: 'air', boundingBox: 'empty', position: wall });
-    const target = session.prepareExploration(current, 8)[0];
-    assert.deepEqual(target.opening, { x: 13, y: 64, z: 10 });
-    assert.ok(target.x > wall.x + 2, 'target must be beyond the near-goal stopping radius');
-    assert.equal(session.recordExplorationViewpoint(current, new Vec3(target.x, target.y, target.z), 8, target), true);
-    assert.equal(session.exploration.openings.length, 0);
-    assert.equal(session.hasPendingExplorationObservation(), true);
-});
+        await session.handleRawMessage('Server', '[FWG:RESET] session=human; stage=exits; attempt=2');
+        assert.equal(conversations.starts.length, 0);
+        assert.equal(agent.self_prompter.startArgs.length, 2);
+        assert.equal(agent.self_prompter.setPromptPausedArgs.length, 1);
+        assert.equal(agent.vision_interpreter.observeCalls, 2);
+        assert.match(agent.self_prompter.prompt, /Current attempt: 2/);
+        assert.match(agent.self_prompter.prompt, /AL_Gamja is a HUMAN/);
+        await session.handleRawMessage('Server', '[FWG:CLEAR] session=human; stage=exits');
+        assert.equal(agent.self_prompter.isStopped(), true);
+    });
+
+    test(`${name} preserves an explicit plate goal without inventing role assignments`, async () => {
+        const agent = makeAgent(role);
+        const session = new FirewaterSession(agent, { conversationManager: makeFakeConversationManager(), planningDelayMs: -1 });
+        const goal = 'Hold the west plate while your partner crosses the gate';
+        await session.handleRawMessage('Server', `[FWG:START] stage=plate; ${partnerRole}-player=AL_Gamja; goal=${goal}`);
+        assert.ok(agent.self_prompter.prompt.includes(`Server goal: ${goal}`));
+        assert.match(agent.self_prompter.prompt, /Keep holding while the route depends on it/);
+        assert.match(agent.self_prompter.prompt, /observed devices assigned to your role or any/);
+        assert.match(agent.self_prompter.prompt, /report the actual blocker to AL_Gamja/);
+    });
+
+    test(`visited safe ${liquid} does not attract ${name} back toward the starting pool`, () => {
+        const bounds = { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } };
+        const current = { x: 20, y: 64, z: 20 };
+        const pool = { kind: 'hazard', name: liquid, position: { x: 5, y: 63, z: 5 } };
+        assert.deepEqual(planFirewaterExploration(bounds, current, [], role, 8, [pool]),
+            planFirewaterExploration(bounds, current, [], role, 8));
+    });
+
+    test(`${name} crosses an opened wall even through previously visited space`, () => {
+        const agent = makeAgent(role);
+        const session = new FirewaterSession(agent, { planningDelayMs: -1 });
+        session.lifecycle = 'running';
+        session.session = { bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } } };
+        const current = new Vec3(10, 64, 10);
+        const wall = new Vec3(13, 64, 10);
+        session.exploration.visited.push({ x: 17, y: 64, z: 10 });
+        session.handleExplorationBlockUpdate(
+            { type: 1, stateId: 1, boundingBox: 'block' },
+            { type: 0, stateId: 0, name: 'air', boundingBox: 'empty', position: wall });
+        const target = session.prepareExploration(current, 8)[0];
+        assert.deepEqual(target.opening, { x: 13, y: 64, z: 10 });
+        assert.ok(target.x > wall.x + 2, 'target must be beyond the near-goal stopping radius');
+        assert.equal(session.recordExplorationViewpoint(current, new Vec3(target.x, target.y, target.z), 8, target), true);
+        assert.equal(session.exploration.openings.length, 0);
+        assert.equal(session.hasPendingExplorationObservation(), true);
+    });
+}
 
 test('gem removal and fluid updates do not invent opened passages, and closed walls invalidate them', () => {
     const session = new FirewaterSession(makeAgent(), { planningDelayMs: -1 });

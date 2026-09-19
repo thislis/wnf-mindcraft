@@ -146,25 +146,27 @@ test('a blocked path, moving player, or stage change never produces a false arri
 });
 
 
-test('Agent routes human chat into a paused multi-command turn and leaves system turns alone', async () => {
-    const { agent, control, prompter } = fixture();
-    agent.name = 'Wade';
-    agent._handleMessage = async (source, message, limit) => {
-        if (source === 'AL_Gamja') {
-            assert.equal(prompter.active, false);
-            assert.equal(limit, 6, 'observation must not consume the entire human turn');
-            assert.equal(control.request.message, message);
-            control.hold();
-        } else {
-            assert.equal(control.request, null);
-        }
-        await Promise.resolve();
-        return true;
-    };
-    assert.equal(await Agent.prototype.handleMessage.call(agent, 'AL_Gamja', 'come here'), true);
-    assert.equal(prompter.active, false);
-    assert.equal(await Agent.prototype.handleMessage.call(agent, 'system', 'status', 1), true);
-});
+for (const name of ['Wade', 'Ember']) {
+    test(`${name} routes human chat into a paused multi-command turn and leaves system turns alone`, async () => {
+        const { agent, control, prompter } = fixture();
+        agent.name = name;
+        agent._handleMessage = async (source, message, limit) => {
+            if (source === 'AL_Gamja') {
+                assert.equal(prompter.active, false);
+                assert.equal(limit, 6, 'observation must not consume the entire human turn');
+                assert.equal(control.request.message, message);
+                control.hold();
+            } else {
+                assert.equal(control.request, null);
+            }
+            await Promise.resolve();
+            return true;
+        };
+        assert.equal(await Agent.prototype.handleMessage.call(agent, 'AL_Gamja', 'come here'), true);
+        assert.equal(prompter.active, false);
+        assert.equal(await Agent.prototype.handleMessage.call(agent, 'system', 'status', 1), true);
+    });
+}
 
 test('the actual conversation prompt carries the current human request alongside the stage goal', async () => {
     const { agent, control } = fixture();
