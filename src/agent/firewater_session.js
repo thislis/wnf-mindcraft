@@ -665,9 +665,9 @@ export class FirewaterSession {
               `(${this.session.bounds.max.x}, ${this.session.bounds.max.y}, ${this.session.bounds.max.z}).`
             : 'Stage bounds were not supplied; coordinate actions will remain disabled.';
         const partner = this.getPartnerName();
-        const roleSequence = this.session.gems?.length ? 'Collect observed gems assigned to your role or any. Open blocked routes using observed switches assigned to your role or any; do not wait on an unspecified plate. Prioritize gems before the final exit.' : this.role === 'wade'
-            ? 'When Ember is holding a plate and you can see a lever or button, activate one switch before going to your exit. Ember may have no path until you do this.'
-            : 'Hold the pressure plate until Wade reports that the switch is activated. Only then leave the plate for your exit; if the exit path reports no path, return to the plate and report the blocker.';
+        const roleSequence = this.session.gems?.length
+            ? 'Collect observed gems assigned to your role or any. Prioritize gems before the final exit.'
+            : 'Follow the server goal and stage brief to determine the required route; the absence of gems does not imply a plate or switch prerequisite.';
         return [
             `Clear Firewater stage "${this.session.stage}" with ${partner}.`,
             `Current attempt: ${this.session.attempt}. Server goal: ${this.session.goal}`,
@@ -676,6 +676,7 @@ export class FirewaterSession {
             `Treat these stage blocks as poison: ${poison}.`,
             bounds,
             roleSequence,
+            `Use observed devices assigned to your role or any only when the route requires them. Hold an allowed plate when the stage goal, observed route, or ${partner}'s request requires it. Keep holding while the route depends on it; leave only after observing or receiving confirmation that the dependent action is complete. If blocked, report the actual blocker to ${partner} instead of assuming a fixed plate/switch sequence.`,
             `Reach and hold the ${exit} while ${partner} holds their matching exit for ${this.session.holdTicks} server ticks.`,
             `After required gems are collected and route devices are complete, your final destination is the observed ${exitMaterial.replaceAll('_', ' ')} block.`,
             'Use !observeFirewater before coordinate actions, then use !collectGemAt for your registered gems, !activateBlockAt for allowed levers/buttons, or !standOnBlock for allowed plates/your exit with exact recently observed coordinates.',
