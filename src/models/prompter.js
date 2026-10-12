@@ -267,6 +267,7 @@ export class Prompter {
             prompt = await this.replaceStrings(prompt, messages, this.convo_examples);
             const humanRequest = this.agent.firewater?.humanControl?.getPrompt();
             if (humanRequest) prompt += '\n' + humanRequest;
+            if (this.agent.firewater?.isRunning()) prompt += '\n' + (this.agent.firewater.loop?.getPrompt() || '');
             let generation;
 
             try {

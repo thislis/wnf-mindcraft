@@ -1,19 +1,19 @@
 {
     "name": "Ember",
-    "model": "openai-codex/gpt-5.6-terra",
-    "vision_model": "openai-codex/gpt-5.6-terra",
+    "model": "openai-codex/gpt-6.1-sol",
+    "vision_model": "openai-codex/gpt-6.1-sol",
     "firewater_role": "ember",
     "firewater_partner": "Wade",
     "firewater_conversation_message_limit": 4,
     "prompt_files": {
-        "conversing": "./prompts/ember.conversing.md",
+        "conversing": "./prompts/firewater.conversing.md",
         "coding": "./prompts/ember.coding.md",
         "bot_responder": "./prompts/firewater.bot_responder.md",
         "image_analysis": "./prompts/firewater.image_analysis.md"
     },
     "modes": {
         "self_preservation": false,
-        "unstuck": true,
+        "unstuck": false,
         "cowardice": false,
         "self_defense": false,
         "hunting": false,

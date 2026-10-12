@@ -11,6 +11,7 @@ import { MemoryBank } from './memory_bank.js';
 import { SelfPrompter } from './self_prompter.js';
 import convoManager from './conversation.js';
 import { FirewaterSession, extractFirewaterMessage } from './firewater_session.js';
+import { waitForFirewaterResponse } from './firewater_loop.js';
 import { handleTranslation, handleEnglishTranslation } from '../utils/translator.js';
 import { addBrowserViewer } from './vision/browser_viewer.js';
 import { serverProxy, sendOutputToServer } from './mindserver_proxy.js';
@@ -296,6 +297,7 @@ export class Agent {
             return false;
         }
 
+        const turnGeneration = this.firewater?.isRunning() ? this.firewater.generation : null;
         let used_command = false;
         if (max_responses === null) {
             max_responses = settings.max_commands === -1 ? Infinity : settings.max_commands;
@@ -318,7 +320,7 @@ export class Agent {
                 if (user_command_name === '!newAction') {
                     // all user-initiated commands are ignored by the bot except for this one
                     // add the preceding message to the history to give context for newAction
-                    this.history.add(source, message);
+                    await this.history.add(source, message);
                 }
                 let execute_res = await executeCommand(this, message);
                 if (execute_res) 
@@ -327,14 +329,17 @@ export class Agent {
             }
         }
 
-        if (from_other_bot)
+        if (from_other_bot) {
             this.last_sender = source;
+            this.firewater?.loop?.wake();
+        }
 
         // Now translate the message
         message = await handleEnglishTranslation(message);
         console.log('received message from', source, ':', message);
 
-        const checkInterrupt = () => this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source);
+        const checkInterrupt = () => (turnGeneration !== null && turnGeneration !== this.firewater.generation) ||
+            this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source);
         
         let behavior_log = this.bot.modes.flushBehaviorLog().trim();
         if (behavior_log.length > 0) {
@@ -348,14 +353,27 @@ export class Agent {
 
         // Handle other user messages
         await this.history.add(source, message);
-        this.history.save();
+        await this.history.save();
 
         if (!self_prompt && this.self_prompter.isActive()) // message is from user during self-prompting
             max_responses = 1; // force only respond to this message, then let self-prompting take over
         for (let i=0; i<max_responses; i++) {
             if (checkInterrupt()) break;
+            await this.firewater?.prepareDecision?.();
+            if (checkInterrupt() || (self_prompt && this.firewater?.loop?.waiting)) break;
             let history = this.history.getHistory();
-            let res = await this.prompter.promptConvo(history);
+            const generation = this.firewater?.generation;
+            let res;
+            try {
+                const pending = this.prompter.promptConvo(history);
+                res = this.firewater?.isRunning()
+                    ? await waitForFirewaterResponse(pending, () => checkInterrupt() || this.firewater.generation !== generation)
+                    : await pending;
+            } catch (error) {
+                await this.history.add('system', `Decision unavailable: ${error.message}`);
+                if (this.firewater?.humanControl.request) this.firewater.humanControl.hold();
+                break;
+            }
             if (checkInterrupt()) break;
 
             console.log(`${this.name} full response to ${source}: ""${res}""`);
@@ -369,10 +387,10 @@ export class Agent {
 
             if (command_name) { // contains query or command
                 res = truncCommandMessage(res); // everything after the command is ignored
-                this.history.add(this.name, res);
+                await this.history.add(this.name, res);
                 
                 if (!commandExists(command_name)) {
-                    this.history.add('system', `Command ${command_name} does not exist.`);
+                    await this.history.add('system', `Command ${command_name} does not exist.`);
                     console.warn('Agent hallucinated command:', command_name);
                     continue;
                 }
@@ -401,20 +419,30 @@ export class Agent {
                 let execute_res = await executeCommand(this, res);
 
                 console.log('Agent executed:', command_name, 'and got:', execute_res);
+                if (command_name === '!traverseFirewater' && execute_res?.includes('Traversed ') && this.firewater?.loop?.plan?.phase === 'complete' &&
+                    !this.firewater.loop.plan.reported) {
+                    this.firewater.loop.plan.reported = true;
+                    await this.routeResponse(source, 'I reached the safe landing. Check whether anyone else still needs the supported passage before releasing it.');
+                }
+                if (this.firewater?.loop?.waiting && !this.firewater.loop.reported) {
+                    this.firewater.loop.reported = true;
+                    await this.routeResponse(source, this.firewater.loop.helpMessage());
+                }
                 used_command = true;
 
                 if (execute_res)
-                    this.history.add('system', execute_res);
+                    await this.history.add('system', execute_res);
                 else
                     break;
             }
             else { // conversation response
-                this.history.add(this.name, res);
+                await this.history.add(this.name, res);
                 this.routeResponse(source, res);
                 break;
             }
             
-            this.history.save();
+            await this.history.save();
+            if (this.firewater?.humanControl.resumeRequested || this.firewater?.loop?.waiting) break;
             if (i === max_responses - 1 && this.firewater?.humanControl.request) {
                 // A multi-step human request hit its turn budget. Do not wander
                 // away before the player can clarify or continue the request.

@@ -1,3 +1,10 @@
+// Explicit continuation requests switch control modes; they are not six-action tasks.
+export function isFirewaterResumeRequest(message) {
+    const text = String(message).trim().toLowerCase().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
+    return /^(?:please )?(?:resume(?: (?:the )?(?:game|play|playing|autonomous play))?|continue(?: (?:the )?(?:game|play|playing))?|(?:clear|finish|complete|play) (?:this |the )?game|do your to-?do)(?: please)?$/.test(text) ||
+        /^(?:(?:게임|플레이|자율 플레이)(?:을|를)?\s*)?(?:계속(?:해|해줘|해 줘| 진행해| 진행해줘)?|재개(?:해|해줘|해 줘)?|클리어(?:해|해줘|해 줘))$/.test(text);
+}
+
 /** Serialize human requests while the server-owned stage goal is paused. */
 export class FirewaterHumanControl {
     constructor(session) {
@@ -18,8 +25,19 @@ export class FirewaterHumanControl {
             await agent.self_prompter.waitForLoopStop();
             if (!this.session.isRunning() || generation !== this.session.generation) return false;
             this.request = { source, message };
+            this.session.loop?.wake();
+            if (!/don't|do not|하지 마|움직이지 마/i.test(message) &&
+                /^(?:please )?(?:come |go to |move to |stand on |climb |press |여기로 와|이리 와|올라가|밟아|눌러)|^!(?:goToPlayer|standOnBlock|traverseFirewater)\(/i.test(message.trim()) && this.session.loop)
+                this.session.loop.hold = null;
             this.resumeRequested = false;
             try {
+                if (isFirewaterResumeRequest(message)) {
+                    this.resume();
+                    if (this.session.loop) this.session.loop.needsObservation = true;
+                    await agent.history?.add?.(source, message);
+                    await agent.routeResponse?.(source, 'Resuming the stage goal.');
+                    return true;
+                }
                 return await respond();
             } catch (error) {
                 // A failed human turn must not silently restart unrelated exploration.
@@ -52,12 +70,8 @@ export class FirewaterHumanControl {
         if (!this.request) return '';
         const { source, message } = this.request;
         return `HUMAN REQUEST IN PROGRESS from ${source}: ${JSON.stringify(message)}\n` +
-            'Handle this request before autonomous gem collection or exploration. The stage goal is paused. ' +
-            `For "come here", use !goToPlayer("${source}", 2) immediately; player positions come from the loaded world, so no puzzle observation is needed first. ` +
-            'For "come here and stand on this plate", approach the speaker, observe, then stand on the freshly observed allowed plate nearest the speaker. ' +
-            'If the target is ambiguous, ask one short clarification in ordinary chat. Do not use bot conversation commands for a human. ' +
-            'Honor game bounds, role hazards, and observed-device permissions. If blocked, explain the actual blocker; do not substitute unrelated exploration. ' +
-            'After arriving or standing, stay there until the player gives another instruction. Use !waitForInstructions for a request to wait/stop, ' +
-            'and !resumeFirewater only when the human asks to resume autonomous play. After fulfilling the request, give a short result without another command.';
+            `Handle this before autonomous gem collection or exploration. For an arrival request use !goToPlayer("${source}", 2). ` +
+            'Observe before a requested device action. Ask if ambiguous; report actual blockers. Stay after arrival/hold. ' +
+            'For a request to clear/continue the whole game, call !resumeFirewater immediately; do not try to finish the stage in this short human turn. Use !waitForInstructions to wait. Reply briefly in ordinary chat.';
     }
 }

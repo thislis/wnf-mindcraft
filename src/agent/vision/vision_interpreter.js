@@ -1,5 +1,6 @@
 import { Vec3 } from 'vec3';
 import fs from 'fs';
+import { waitForFirewaterResponse } from '../firewater_loop.js';
 import { targetPriority } from '../library/firewater_targets.js';
 
 export const FIREWATER_OBSERVATION_MAX_AGE_MS = 30_000;
@@ -24,6 +25,7 @@ function isPressurePlate(name) {
 
 function classifyBlock(name, context, position) {
     if (context.gems.some(gem => gem.name === name && positionKey(gem.position) === positionKey(position))) return 'gem';
+    if (['ladder', 'vine', 'scaffolding'].includes(name)) return 'route';
     if (isInteractive(name)) return 'activator';
     if (isPressurePlate(name)) return 'pressure_plate';
     if (context.exitMaterials.has(name)) return 'exit';
@@ -36,6 +38,12 @@ function classifyBlock(name, context, position) {
 // reaching the exit centre. For exits, also test the centre of the top face—the
 // surface a player can actually see and stand on.
 export function canSeeFirewaterTarget(bot, block, kind) {
+    if (kind === 'route' && ['air', 'cave_air'].includes(block.name)) {
+        if (!bot.world?.raycast) return false;
+        const head = bot.entity.position.offset(0, bot.entity.eyeHeight || 1.62, 0);
+        const direction = block.position.offset(0.5, 0.5, 0.5).minus(head);
+        return !bot.world.raycast(head, direction.normalize(), direction.norm());
+    }
     if (bot.canSeeBlock(block)) return true;
     if (!['exit', 'gem', 'activator', 'pressure_plate'].includes(kind) || !bot.world?.raycast) return false;
 
@@ -94,8 +102,12 @@ export class VisionInterpreter {
     }
 
     clearFirewaterObservations() {
-        this.observedTargets.clear();
+        this.invalidateFirewaterCoordinates();
         this.knownTargets.clear();
+    }
+
+    invalidateFirewaterCoordinates() {
+        this.observedTargets.clear();
     }
 
     getExplorationHints() {
@@ -111,53 +123,106 @@ export class VisionInterpreter {
         return this.observedTargets.get(`${x},${y},${z}`) || null;
     }
 
-    async observeFirewater() {
-        if (!this.allow_vision || !this.agent.prompter.vision_model.sendVisionRequest) {
-            return 'Firewater observation failed: vision is unavailable for this bot.';
+    async observeFirewater({ visual = true } = {}) {
+        const generation = this.agent.firewater?.generation;
+        let analysis = '';
+        if (visual) {
+            if (!this.allow_vision || !this.agent.prompter.vision_model?.sendVisionRequest)
+                analysis = 'Images unavailable; use visible block evidence.';
+            else {
+                const controller = new AbortController();
+                try {
+                    analysis = await waitForFirewaterResponse(this._inspectFirewaterImages(controller.signal),
+                        () => this.agent.firewater?.generation !== generation || !!this.agent.bot.interrupt_code);
+                } catch (error) {
+                    analysis = `Image inspection unavailable: ${error.message}`;
+                } finally {
+                    controller.abort();
+                }
+            }
         }
+        if (this.agent.firewater?.generation !== generation || (visual && this.agent.bot.interrupt_code))
+            return 'Firewater observation interrupted.';
+        // Refresh AFTER slow image analysis. Permissions describe the world now,
+        // not blocks that existed when the screenshots were taken.
+        const targets = this._collectLineOfSightTargets();
+        const changes = [];
+        const removed = [];
+        this.observedTargets.clear();
+        for (const target of targets) {
+            const key = positionKey(target.position);
+            const previous = this.knownTargets.get(key);
+            if (!previous && target.kind !== 'hazard') changes.push(`new ${target.kind} at (${key})`);
+            else if (previous.name !== target.name || previous.powered !== target.powered)
+                changes.push(`changed ${target.name} at (${key}); powered=${target.powered}`);
+            this.knownTargets.set(key, target);
+            this.observedTargets.set(key, { ...target, observedAt: this.now() });
+        }
+        for (const [key, target] of this.knownTargets) {
+            const block = this.agent.bot.blockAt(new Vec3(target.position.x, target.position.y, target.position.z));
+            if (block && block.name !== target.name) {
+                this.knownTargets.delete(key);
+                removed.push(key);
+                changes.push(`${target.name} no longer at (${key})`);
+            }
+        }
+        this.agent.firewater?.loop?.recordObservation(targets, this.agent.bot.entity.position,
+            { now: this.now(), visual, removed });
+        return [
+            visual ? 'FIREWATER_OBSERVATION (images: front, right, back, left)' : 'FIREWATER_OBSERVATION (fast visible block evidence)',
+            analysis ? `Image context (captured earlier; current metadata takes precedence): ${analysis}` : '',
+            this._formatLineOfSightMetadata(targets),
+            this._formatPlayers(),
+            `Changes: ${changes.slice(0, 12).join('; ') || 'no new visible target or device state'}.`,
+            this.agent.firewater?.loop?.pendingExploration ? '' : `Explorations without useful progress: ${this.agent.firewater?.loop?.stalledExplorations || 0}.`,
+            `Fresh coordinate permissions: ${this.observationMaxAgeMs / 1000}s. Older remembered targets are clues only.`,
+        ].filter(Boolean).join('\n');
+    }
 
+    async _inspectFirewaterImages(signal) {
         const bot = this.agent.bot;
+        const generation = this.agent.firewater?.generation;
         const originalYaw = bot.entity.yaw;
         const originalPitch = bot.entity.pitch;
-        const directions = [
-            { label: 'front', offset: 0 },
-            { label: 'right', offset: Math.PI / 2 },
-            { label: 'back', offset: Math.PI },
-            { label: 'left', offset: -Math.PI / 2 },
-        ];
         const filenames = [];
-
+        let focus = null;
         await this._ensureCamera();
         try {
-            for (const direction of directions) {
-                await bot.look(originalYaw + direction.offset, 0, true);
+            for (const offset of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+                if (signal.aborted || bot.interrupt_code || this.agent.firewater?.generation !== generation) return '';
+                await bot.look(originalYaw + offset, 0, true);
+                filenames.push(await this.camera.capture());
+            }
+            // Resolve the ambiguity that horizontal views cannot: ladder top/landing.
+            const routes = this._collectLineOfSightTargets().filter(t => t.kind === 'route');
+            const route = routes.find(t => positionKey(t.position) === this.agent.firewater?.loop?.plan?.target) || routes[0];
+            if (route && !signal.aborted && !bot.interrupt_code && this.agent.firewater?.generation === generation) {
+                let top = new Vec3(route.position.x, route.position.y, route.position.z);
+                const bounds = this.agent.firewater?.getObservationContext?.().bounds;
+                for (let n = 0; n < 16 && (!bounds || top.y + 1 <= bounds.max.y) &&
+                    ['ladder', 'vine', 'scaffolding'].includes(bot.blockAt(top.offset(0, 1, 0))?.name); n++) top = top.offset(0, 1, 0);
+                focus = top.offset(0.5, 1.5, 0.5);
+                if (bot.lookAt) await bot.lookAt(focus, true);
+                else await bot.look(originalYaw, Math.PI / 6, true);
                 filenames.push(await this.camera.capture());
             }
         } finally {
-            await bot.look(originalYaw, originalPitch, true);
+            if (!signal.aborted && !bot.interrupt_code && this.agent.firewater?.generation === generation)
+                await bot.look(originalYaw, originalPitch, true);
         }
+        if (signal.aborted || bot.interrupt_code || this.agent.firewater?.generation !== generation) return '';
+        const metadata = this._formatLineOfSightMetadata(this._collectLineOfSightTargets());
+        return this.agent.prompter.promptVision(
+            [{ role: 'system', content: metadata + `\nView order: front, right, back, left${focus ? ', focused route top/landing' : ''}.` }],
+            filenames.map(filename => this.readImage(filename)),
+        );
+    }
 
-        const targets = this._collectLineOfSightTargets();
-        const timestamp = this.now();
-        for (const target of targets) {
-            this.knownTargets.set(positionKey(target.position), target);
-            this.observedTargets.set(positionKey(target.position), {
-                ...target,
-                observedAt: timestamp,
-            });
-        }
-        this._pruneObservedTargets();
-
-        const buffers = filenames.map(filename => this.readImage(filename));
-        const messages = this.agent.history.getHistory();
-        const analysis = await this.agent.prompter.promptVision(messages, buffers);
-        const metadata = this._formatLineOfSightMetadata(targets);
-        return [
-            'FIREWATER_OBSERVATION (images: front, right, back, left)',
-            `Image analysis: ${analysis}`,
-            metadata,
-            `Only coordinates in this observation may be targeted for ${this.observationMaxAgeMs / 1000} seconds.`,
-        ].join('\n');
+    _formatPlayers() {
+        const bot = this.agent.bot;
+        return 'PLAYERS: ' + Object.entries(bot.players || {}).filter(([, player]) =>
+            player.entity && bot.entity.position.distanceTo(player.entity.position) <= FIREWATER_LINE_OF_SIGHT_DISTANCE
+        ).map(([name, player]) => `${name} at (${player.entity.position.x.toFixed(1)}, ${player.entity.position.y.toFixed(1)}, ${player.entity.position.z.toFixed(1)})`).join('; ');
     }
 
     async lookAtPlayer(player_name, direction) {
@@ -240,7 +305,9 @@ export class VisionInterpreter {
             count: category === 'targets' ? 512 : 64,
             useExtraInfo: true,
         });
-        const positions = [...find('targets'), ...find('safe'), ...find('hazards')];
+        const openings = this.agent.firewater?.exploration?.openings || [];
+        const positions = [...find('targets'), ...find('safe'), ...find('hazards'),
+            ...openings.map(p => new Vec3(p.x, p.y, p.z)).filter(p => bot.entity.position.distanceTo(p) <= FIREWATER_LINE_OF_SIGHT_DISTANCE)];
         const unique = new Map();
         for (const position of positions) {
             const block = bot.blockAt(position);
@@ -248,7 +315,8 @@ export class VisionInterpreter {
             const bounds = context.bounds;
             const p = block.position;
             if (bounds && (p.x < bounds.min.x || p.x > bounds.max.x || p.y < bounds.min.y || p.y > bounds.max.y || p.z < bounds.min.z || p.z > bounds.max.z)) continue;
-            const kind = classifyBlock(block.name, context, block.position);
+            const opening = ['air', 'cave_air'].includes(block.name) && openings.some(p => positionKey(p) === positionKey(block.position));
+            const kind = opening ? 'route' : classifyBlock(block.name, context, block.position);
             if (!kind) continue;
             if (!canSeeFirewaterTarget(bot, block, kind)) continue;
             const gem = context.gems.find(g => positionKey(g.position) === positionKey(block.position));
@@ -257,7 +325,16 @@ export class VisionInterpreter {
                 (['activator', 'pressure_plate'].includes(kind) ? (context.interactions ? 'unknown' : 'any') : undefined);
             const properties = block.getProperties?.() || {};
             unique.set(positionKey(block.position), {
-                ...gem, role, powered: properties.powered === true,
+                ...gem, role, ...(opening ? { routeType: 'opening' } : {}), powered: properties.powered === true || Number(properties.power) > 0,
+                occupants: kind === 'pressure_plate' ? [
+                    ...Object.entries(bot.players || {}).filter(([, player]) => player.entity &&
+                        Math.floor(player.entity.position.x) === block.position.x &&
+                        Math.floor(player.entity.position.z) === block.position.z &&
+                        Math.abs(player.entity.position.y - block.position.y) < 0.6).map(([name]) => name),
+                    ...(Math.floor(bot.entity.position.x) === block.position.x &&
+                        Math.floor(bot.entity.position.z) === block.position.z &&
+                        Math.abs(bot.entity.position.y - block.position.y) < 0.6 ? [this.agent.name] : []),
+                ].filter((name, index, all) => all.indexOf(name) === index) : [],
                 name: block.name,
                 kind,
                 position: {
@@ -274,11 +351,15 @@ export class VisionInterpreter {
     _formatLineOfSightMetadata(targets) {
         if (targets.length === 0)
             return `LINE_OF_SIGHT_TARGETS (<=${FIREWATER_LINE_OF_SIGHT_DISTANCE} blocks): none`;
+        const role = this.agent.firewater?.getObservationContext?.().role;
+        const safeName = role === 'wade' ? 'water' : role === 'ember' ? 'lava' : null;
+        const safe = targets.filter(t => t.name === safeName);
         return [
             `LINE_OF_SIGHT_TARGETS (<=${FIREWATER_LINE_OF_SIGHT_DISTANCE} blocks):`,
-            ...targets.map(target =>
-                `- ${target.kind} ${target.name} at (${target.position.x}, ${target.position.y}, ${target.position.z}); distance=${target.distance}${target.role ? `; role=${target.role}` : ''}${target.kind === 'gem' ? '; approach with !collectGemAt' : ''}${target.kind === 'activator' ? `; powered=${target.powered}` : ''}`
+            ...targets.filter(t => t.name !== safeName).map(target =>
+                `- ${target.kind} ${target.name} at (${target.position.x}, ${target.position.y}, ${target.position.z}); distance=${target.distance}${target.role ? `; role=${target.role}` : ''}${target.kind === 'gem' ? '; approach with !collectGemAt' : ''}${target.kind === 'route' ? '; traverse with !traverseFirewater' : ''}${['activator', 'pressure_plate'].includes(target.kind) ? `; powered=${target.powered}` : ''}${target.kind === 'pressure_plate' ? `; occupants=${target.occupants?.join(',') || 'none'}` : ''}`
             ),
+            ...(safe.length ? [`Safe terrain: ${safeName}; ${safe.length} visible blocks; nearest (${positionKey(safe[0].position)}).`] : []),
         ].join('\n');
     }
 

@@ -41,18 +41,18 @@
         "yargs": "^17.7.2"
     },
     "overrides": {
-      "canvas": "^3.1.0",
-      "gl": "^8.1.6",
-      "protodef": "1.19.0"
+        "canvas": "^3.1.0",
+        "gl": "^8.1.6",
+        "protodef": "1.19.0"
     },
     "scripts": {
         "postinstall": "patch-package",
         "start": "node main.js",
-        "test:firewater": "node --test src/models/openai_codex.test.js src/agent/vision/vision_interpreter.test.js src/agent/vision/render_readiness.test.js src/agent/vision/viewer_compatibility.test.js src/agent/firewater_session.test.js src/agent/firewater_human_control.test.js src/agent/library/firewater_movements.test.js src/agent/library/firewater_exploration.test.js src/agent/library/firewater_targets.test.js",
+        "test:firewater": "node --test src/models/openai_codex.test.js src/agent/vision/vision_interpreter.test.js src/agent/vision/render_readiness.test.js src/agent/vision/viewer_compatibility.test.js src/agent/firewater_session.test.js src/agent/firewater_human_control.test.js src/agent/library/firewater_movements.test.js src/agent/library/firewater_exploration.test.js src/agent/library/firewater_targets.test.js src/agent/firewater_loop.test.js src/agent/library/firewater_routes.test.js src/agent/firewater_decision.test.js",
         "test:firewater:vision-live": "node scripts/test-firewater-vision-live.mjs",
         "test:firewater:vision-live:oauth": "node scripts/test-firewater-vision-live.mjs oauth",
         "test:firewater:vision-live:api": "node scripts/test-firewater-vision-live.mjs api",
-        "lint:firewater": "eslint scripts/test-firewater-vision-live.mjs scripts/test-firewater-rendering.mjs src/models/openai_codex.js src/models/openai_codex.test.js src/agent/vision/camera.js src/agent/vision/render_readiness.js src/agent/vision/screenshot_retention.js src/agent/vision/vision_interpreter.js src/agent/vision/vision_interpreter.test.js src/agent/vision/render_readiness.test.js src/agent/vision/viewer_compatibility.test.js src/agent/firewater_session.js src/agent/firewater_session.test.js src/agent/firewater_human_control.js src/agent/firewater_human_control.test.js src/agent/library/firewater_player.js src/agent/conversation.js src/agent/library/firewater_movements.js src/agent/library/firewater_exploration.js src/agent/library/firewater_targets.js src/agent/library/firewater_movements.test.js src/agent/library/firewater_exploration.test.js src/agent/library/firewater_targets.test.js",
+        "lint:firewater": "eslint scripts/test-firewater-vision-live.mjs scripts/test-firewater-rendering.mjs src/models/openai_codex.js src/models/openai_codex.test.js src/agent/vision/camera.js src/agent/vision/render_readiness.js src/agent/vision/screenshot_retention.js src/agent/vision/vision_interpreter.js src/agent/vision/vision_interpreter.test.js src/agent/vision/render_readiness.test.js src/agent/vision/viewer_compatibility.test.js src/agent/firewater_session.js src/agent/firewater_session.test.js src/agent/firewater_human_control.js src/agent/firewater_human_control.test.js src/agent/library/firewater_player.js src/agent/conversation.js src/agent/library/firewater_movements.js src/agent/library/firewater_exploration.js src/agent/library/firewater_targets.js src/agent/library/firewater_movements.test.js src/agent/library/firewater_exploration.test.js src/agent/library/firewater_targets.test.js src/agent/firewater_loop.js src/agent/firewater_loop.test.js src/agent/self_prompter.js src/agent/library/firewater_routes.js src/agent/library/firewater_routes.test.js src/agent/firewater_decision.test.js",
         "test:firewater:rendering": "node scripts/test-firewater-rendering.mjs",
         "check:firewater-runtime": "node scripts/check-firewater-runtime.mjs",
         "smoke:firewater": "node scripts/smoke-firewater-runtime.mjs",

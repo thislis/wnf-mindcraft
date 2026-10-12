@@ -11,7 +11,7 @@ export async function findReachableExplorationTarget(bot, profile, candidates, o
         const result = bot.pathfinder.getPathTo(movements, goal, 150);
         if (bot.interrupt_code) return null;
         if (result.status === 'success') return target;
-        onFailure(target);
+        if (result.status === 'noPath') onFailure(target); // A search timeout is not proof of an unreachable route.
         // Let interrupts and block updates run between bounded path probes.
         await new Promise(resolve => setTimeout(resolve, 0));
     }
