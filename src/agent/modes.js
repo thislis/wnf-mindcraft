@@ -100,7 +100,8 @@ const modes_list = [
         max_stuck_time: 20,
         prev_dig_block: null,
         update: async function (agent) {
-            if (agent.isIdle()) { 
+            if (agent.isIdle() || agent.firewater?.isRunning()) {
+                this.last_time = Date.now();
                 this.prev_location = null;
                 this.stuck_time = 0;
                 return; // don't get stuck when idle

@@ -19,7 +19,10 @@ export const FIREWATER_COMMAND_ALLOWLIST = new Set([
     '!waitForInstructions',
     '!resumeFirewater',
     '!observeFirewater',
+    '!inspectFirewater',
+    '!releaseFirewaterHold',
     '!exploreFirewater',
+    '!traverseFirewater',
     '!collectGemAt',
     '!activateBlockAt',
     '!standOnBlock',
@@ -248,7 +251,13 @@ export async function executeCommand(agent, message) {
         if (numArgs !== numParams(command))
             return `Command ${command.name} was given ${numArgs} args, but requires ${numParams(command)} args.`;
         else {
+            const loop = agent.firewater?.isRunning() ? agent.firewater.loop : null;
+            const generation = agent.firewater?.generation;
+            const blocker = loop?.beforeCommand(parsed.commandName, parsed.args, agent.bot.entity.position);
+            if (blocker) { loop.recordBlocked(blocker); return blocker; }
             const result = await command.perform(agent, ...parsed.args);
+            if (generation === agent.firewater?.generation)
+                loop?.recordResult(parsed.commandName, parsed.args, result, agent.bot.entity.position);
             return result;
         }
     }

@@ -191,3 +191,31 @@ test('the actual conversation prompt carries the current human request alongside
         control.hold();
     });
 });
+
+test('clear/continue requests resume the stage instead of consuming a six-command human turn', async () => {
+    const { isFirewaterResumeRequest } = await import('./firewater_human_control.js');
+    for (const message of ['clear this game', 'do your To-do', 'please continue playing', '게임 계속해', '게임 클리어해줘', '자율 플레이 재개해']) {
+        const { control, prompter } = fixture();
+        control.hold();
+        assert.equal(isFirewaterResumeRequest(message), true, message);
+        let shortTurns = 0;
+        await control.run('Human', message, async () => { shortTurns++; await Promise.resolve(); });
+        assert.equal(shortTurns, 0);
+        assert.equal(control.holding, false);
+        assert.equal(prompter.active, true);
+        assert.equal(prompter.starts, 1);
+    }
+    for (const message of ["don't continue playing", '게임 계속하지 마', '계속해도 돼?', 'come here', 'clear this game then come here'])
+        assert.equal(isFirewaterResumeRequest(message), false, message);
+});
+
+test('a question does not cancel a cooperative plate hold', async () => {
+    const { agent, control } = fixture();
+    const { FirewaterLoop } = await import('./firewater_loop.js');
+    agent.firewater.loop = new FirewaterLoop();
+    agent.firewater.loop.hold = 'west plate';
+    await control.run('Human', 'where is the exit?', async () => {
+        assert.equal(agent.firewater.loop.hold, 'west plate');
+        await Promise.resolve();
+    });
+});

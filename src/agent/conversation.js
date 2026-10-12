@@ -249,7 +249,6 @@ export class ConversationManager {
         }
 
         if (received.start) {
-            this.agent.firewater?.markIntelExchangeStarted?.();
             convo.reset({
                 id: received.conversation_id,
                 maxMessages: received.max_messages,
@@ -426,7 +425,11 @@ export class ConversationManager {
     }
 
     async _resumeSelfPrompter() {
-        await new Promise(resolve => setTimeout(resolve, this.self_prompt_resume_delay));
+        const session = this.agent.firewater;
+        const generation = session?.generation;
+        await new Promise(resolve => setTimeout(resolve, session?.isRunning() ? 0 : this.self_prompt_resume_delay));
+        if (session?.isEnabled?.() && (!session.isRunning() || session.generation !== generation ||
+            session.humanControl?.request || session.humanControl?.holding)) return;
         if (this.agent.self_prompter.isPaused() && !this.inConversation()) {
             this.agent.self_prompter.start();
         }

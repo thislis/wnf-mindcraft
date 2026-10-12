@@ -6,7 +6,6 @@ import { executeCommand, getCommandDocs } from './commands/index.js';
 import { validateObservedCoordinateTarget } from './commands/actions.js';
 import { SelfPrompter } from './self_prompter.js';
 import {
-    FIREWATER_EXPLORATIONS_BEFORE_INTEL,
     FirewaterSession,
     extractFirewaterMessage,
     planFirewaterExploration,
@@ -214,7 +213,7 @@ test('trusted START participant names override profile partner and lead fallback
     assert.equal(wadeSession.session.emberPlayer, 'FlameMate');
     assert.equal(wadeSession.session.leadRole, 'wade');
     assert.equal(wadeSession.getPartnerName(), 'FlameMate');
-    assert.equal(wadeSession.canInitiateConversation('FlameMate'), false);
+    assert.equal(wadeSession.canInitiateConversation('FlameMate'), true);
     assert.equal(wadeSession.canInitiateConversation(
         'FlameMate', { firewaterPlanning: true }
     ), true);
@@ -232,7 +231,7 @@ test('trusted START participant names override profile partner and lead fallback
     await emberSession.handleRawMessage('Server', start);
     assert.equal(emberSession.getPartnerName(), 'AquaLead');
     assert.equal(emberSession.isConversationLead(), false);
-    assert.equal(emberSession.canInitiateConversation('AquaLead'), false);
+    assert.equal(emberSession.canInitiateConversation('AquaLead'), true);
     assert.match(ember.self_prompter.prompt, /with AquaLead/);
 });
 
@@ -413,7 +412,7 @@ test('active Firewater command allowlist is enforced in execution and prompt doc
     assert.doesNotMatch(docs, /!newAction/);
 });
 
-test('active Firewater goal requires dispersed exploration before partner intelligence', async () => {
+test('stage goal carries only stage facts and partner identity', async () => {
     const agent = makeAgent('ember');
     const session = new FirewaterSession(agent, {
         conversationManager: makeFakeConversationManager(),
@@ -426,9 +425,9 @@ test('active Firewater goal requires dispersed exploration before partner intell
         'goal=Find hidden devices; brief=Explore safely'
     );
 
-    assert.match(agent.self_prompter.prompt, /plate, lever, button, gem, exit/);
-    assert.match(agent.self_prompter.prompt, /!exploreFirewater\(8\), then !observeFirewater/);
-    assert.match(agent.self_prompter.prompt, /at least 3 distinct new viewpoints/);
+    assert.match(agent.self_prompter.prompt, /Find hidden devices/);
+    assert.match(agent.self_prompter.prompt, /Role=ember/);
+    assert.ok(agent.self_prompter.prompt.length < 1000);
 });
 
 test('exploration planner tries nearby unvisited viewpoints before distant anchors', () => {
@@ -466,7 +465,7 @@ test('returning to a visited viewpoint is not counted as new exploration', () =>
     assert.equal(session.getExplorationProgress().searched, 1);
 });
 
-test('manual partner intelligence is gated until three explored observations', () => {
+test('either role can coordinate immediately with the active partner', () => {
     const agent = makeAgent('ember');
     const session = new FirewaterSession(agent, { planningDelayMs: -1 });
     session.lifecycle = 'running';
@@ -475,18 +474,12 @@ test('manual partner intelligence is gated until three explored observations', (
         bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } },
     };
 
-    assert.equal(session.canInitiateConversation('Wade'), false);
-    assert.equal(session.canInitiateConversation('Wade', { firewaterPlanning: true }), false);
-    for (let index = 0; index < FIREWATER_EXPLORATIONS_BEFORE_INTEL; index++) {
-        session.exploration.pendingObservation = true;
-        session.recordExplorationObservation();
-    }
     assert.equal(session.canInitiateConversation('Wade'), true);
-    session.markIntelExchangeStarted();
-    assert.equal(session.canInitiateConversation('Wade'), false);
+    assert.equal(session.canInitiateConversation('Wade', { firewaterPlanning: true }), false);
+    assert.equal(session.canInitiateConversation('UnrelatedPlayer'), false);
 });
 
-test('automatic planning remains lead-only without satisfying the manual search threshold', () => {
+test('automatic initial planning remains lead-only to avoid duplicate exchanges', () => {
     const wade = makeAgent('wade');
     const session = new FirewaterSession(wade, { planningDelayMs: -1 });
     session.lifecycle = 'running';
@@ -494,11 +487,11 @@ test('automatic planning remains lead-only without satisfying the manual search 
         wadePlayer: 'Wade', emberPlayer: 'Ember', lead: 'Wade', bounds: null,
     };
 
-    assert.equal(session.canInitiateConversation('Ember'), false);
+    assert.equal(session.canInitiateConversation('Ember'), true);
     assert.equal(session.canInitiateConversation('Ember', { firewaterPlanning: true }), true);
 });
 
-test('Ember can initiate a short intelligence exchange after the search threshold', async () => {
+test('Ember can initiate a short coordination exchange immediately', async () => {
     const packets = [];
     const manager = new ConversationManager((name, packet) => packets.push({ name, packet }));
     const ember = makeAgent('ember');
@@ -511,7 +504,6 @@ test('Ember can initiate a short intelligence exchange after the search threshol
         id: 'intel', stage: 'hidden', attempt: 1,
         wadePlayer: 'Wade', emberPlayer: 'Ember', lead: 'Wade', bounds: null,
     };
-    session.exploration.observedSinceIntel = FIREWATER_EXPLORATIONS_BEFORE_INTEL;
     ember.firewater = session;
     manager.initAgent(ember);
     manager.updateAgents([
@@ -876,7 +868,7 @@ test('RESET pause and CLEAR stop interrupt a managed retry backoff promptly', as
         selfPrompter.managed_retry_cooldown = 2000;
         selfPrompter.managed_retry_poll_interval = 10;
         selfPrompter.start('Keep clearing the server-owned Firewater stage.');
-        await waitUntil(() => calls === 3);
+        await waitUntil(() => calls === 1);
         await new Promise(resolve => setTimeout(resolve, 0));
 
         const startedAt = Date.now();
@@ -910,7 +902,6 @@ test('forest_gems exploration does not repeat the same six distant goals', () =>
         assert.ok(next.length > 0);
         assert.ok(next.every(target => !failed.has(key(target))));
     }
-    session.markIntelExchangeStarted();
     assert.ok(session.prepareExploration(current, 8).every(target => !failed.has(key(target))));
 });
 
@@ -932,7 +923,7 @@ test('failed paths can be retried after a gate changes but not on lava level upd
         { type: 1, stateId: 1 }, { type: 0, stateId: 0, name: 'air', position: new Vec3(90, 64, 90) });
     assert.equal(contains(), false);
     session.handleExplorationBlockUpdate(
-        { type: 1, stateId: 1 }, { type: 0, stateId: 0, name: 'air', position: current });
+        { type: 1, stateId: 1, boundingBox: 'block' }, { type: 0, stateId: 0, name: 'air', boundingBox: 'empty', position: current });
     assert.equal(contains(), true);
 });
 
@@ -945,7 +936,7 @@ test('gem stages expose collection commands and enforce gem/device ownership for
         await session.handleRawMessage('server', '[FWG:START] session=targets; stage=gems; min-x=0; min-y=60; min-z=0; max-x=40; max-y=72; max-z=40; interaction-roles=8,64,8,wade|8,64,16,ember; gems=7,64,8,blue_stained_glass,wade,-0.5,2.1|7,64,16,red_stained_glass,ember,-0.5,2.1');
         assert.equal(session.getObservationContext().gems.length, 2);
         assert.equal(session.getObservationContext().interactions.length, 2);
-        assert.match(agent.self_prompter.prompt, /!collectGemAt/);
+        assert.match(agent.self_prompter.prompt, /Collect required allowed gems/);
         assert.doesNotMatch(agent.self_prompter.prompt, /Only then leave the plate/);
         for (const kind of ['gem', 'activator', 'pressure_plate']) {
             const action = { gem: 'collect', activator: 'activate', pressure_plate: 'stand' }[kind];
@@ -990,8 +981,7 @@ for (const role of ['wade', 'ember']) {
         assert.equal(conversations.starts.length, 0);
         assert.equal(agent.self_prompter.startArgs.length, 1);
         assert.match(agent.self_prompter.prompt, /AL_Gamja is a HUMAN/);
-        assert.match(agent.self_prompter.prompt, /direct human instruction takes priority/);
-        assert.match(agent.self_prompter.prompt, /absence of gems does not imply a plate or switch prerequisite/);
+        assert.match(agent.self_prompter.prompt, /ordinary chat/);
         assert.doesNotMatch(agent.self_prompter.prompt, /until Wade reports|When Ember is holding|Only then leave the plate/);
 
         await session.handleRawMessage('Server', '[FWG:RESET] session=human; stage=exits; attempt=2');
@@ -1011,9 +1001,8 @@ for (const role of ['wade', 'ember']) {
         const goal = 'Hold the west plate while your partner crosses the gate';
         await session.handleRawMessage('Server', `[FWG:START] stage=plate; ${partnerRole}-player=AL_Gamja; goal=${goal}`);
         assert.ok(agent.self_prompter.prompt.includes(`Server goal: ${goal}`));
-        assert.match(agent.self_prompter.prompt, /Keep holding while the route depends on it/);
-        assert.match(agent.self_prompter.prompt, /observed devices assigned to your role or any/);
-        assert.match(agent.self_prompter.prompt, /report the actual blocker to AL_Gamja/);
+        assert.match(agent.self_prompter.prompt, /with AL_Gamja/);
+        assert.equal(session.loop.hold, null, "the goal alone does not claim the bot is on a plate");
     });
 
     test(`visited safe ${liquid} does not attract ${name} back toward the starting pool`, () => {

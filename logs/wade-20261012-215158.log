@@ -1,0 +1,341 @@
+Error getting server: TypeError: Cannot read properties of null (reading 'version')
+    at ping (/home/gamja/ist-tech/mindcraft-firewater/node_modules/minecraft-protocol/src/ping.js:26:26)
+    at Object.cbPing [as ping] (/home/gamja/ist-tech/mindcraft-firewater/node_modules/minecraft-protocol/src/ping.js:10:23)
+    at file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mcserver.js:21:12
+    at new Promise (<anonymous>)
+    at serverInfo (file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mcserver.js:13:12)
+    at getServer (file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mcserver.js:130:24)
+    at Module.createAgent (file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mindcraft.js:48:34)
+    at file:///home/gamja/ist-tech/mindcraft-firewater/main.js:98:15
+Attempting to connect anyway...
+MindServer running on port 8080 on host localhost
+Timeout pinging server wnf.chogw.uk:25565
+Awaiting openai-codex vision response from model gpt-5.5
+Awaiting openai-codex vision response from model gpt-5.5
+Codex OAuth endpoint rejected image input; retrying through the standard OpenAI Responses API.
+Awaiting openai-codex vision response from model gpt-5.5
+Awaiting openai-codex vision response from model gpt-5.5
+Connecting to MindServer
+TAP version 13
+# Subtest: vision body uses Responses input_image content with original detail for every image
+ok 1 - vision body uses Responses input_image content with original detail for every image
+  ---
+  duration_ms: 2.15861
+  type: 'test'
+  ...
+# Subtest: SSE reader prefers deltas and does not duplicate terminal fallback text
+ok 2 - SSE reader prefers deltas and does not duplicate terminal fallback text
+  ---
+  duration_ms: 5.00206
+  type: 'test'
+  ...
+# Subtest: image modality rejection detection is explicit
+ok 3 - image modality rejection detection is explicit
+  ---
+  duration_ms: 0.887567
+  type: 'test'
+  ...
+# Subtest: Codex vision request sends the expected private Responses payload
+ok 4 - Codex vision request sends the expected private Responses payload
+  ---
+  duration_ms: 2.264227
+  type: 'test'
+  ...
+# Subtest: explicit private image rejection falls back once to standard Responses API
+ok 5 - explicit private image rejection falls back once to standard Responses API
+  ---
+  duration_ms: 4.729872
+  type: 'test'
+  ...
+# Subtest: private non-modality errors never fall back and missing standard key is explicit
+ok 6 - private non-modality errors never fall back and missing standard key is explicit
+  ---
+  duration_ms: 2.21709
+  type: 'test'
+  ...
+Client connected
+Wade connected to MindServer
+Starting agent
+Initializing agent Wade...
+Error with embedding model, using word-overlap instead.
+Error with embedding model, using word-overlap instead.
+Error with embedding model, using word-overlap instead.
+Examples initialized.
+No task.
+Wade logging into minecraft...
+Wade updating available agents
+Wade logged in!
+Wade updating available agents
+Initializing vision intepreter...
+Wade spawned.
+Saved memory to: ./bots/Wade/memory.json
+Saved memory to: ./bots/Wade/memory.json
+Self-prompting started.
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Wade ignored duplicate FWG START for forest_gems/1.
+Awaiting openai-codex response from model gpt-6.1-sol
+Generated response: !exploreFirewater(8)
+
+Wade full response to system: ""!exploreFirewater(8)
+""
+parsed command: { commandName: '!exploreFirewater', args: [ 8 ] }
+executing code...
+
+Agent executed: !exploreFirewater and got: Action output:
+Found wade-safe Firewater path.
+You have reached at 1600, -60, 19.
+Moved to viewpoint (1601, -60, 18) (progress is checked by the next observation) toward nearby target (1600, -60, 19). The loop will observe this viewpoint before the next decision.
+
+Saved memory to: ./bots/Wade/memory.json
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at runNextTicks (node:internal/process/task_queues:64:5)
+    at process.processTimers (node:internal/timers:518:9)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Restarting self-prompting...
+starting self-prompt loop
+received message from system : Choose one next action from current evidence and the last result. Maintain any active hold. Say only what the partner needs to know.
+Saved memory to: ./bots/Wade/memory.json
+Self-prompt turn failed: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at async SelfPrompter.startLoop (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/self_prompter.js:79:38)
+self prompt loop stopped
+Wade received message from AL_Gamja : wade come here
+received message from AL_Gamja : wade come here
+Saved memory to: ./bots/Wade/memory.json
+Error handling message: TypeError: Cannot read properties of undefined (reading 'name')
+    at VisionInterpreter.observeFirewater (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/vision/vision_interpreter.js:156:31)
+    at FirewaterSession.prepareDecision (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_session.js:302:65)
+    at Agent._handleMessage (file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/agent.js:362:52)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async file:///home/gamja/ist-tech/mindcraft-firewater/src/agent/firewater_human_control.js:41:24
+Saved memory to: ./bots/Wade/memory.json

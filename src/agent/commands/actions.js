@@ -1,5 +1,6 @@
 import * as skills from '../library/skills.js';
 import settings from '../settings.js';
+import { traverseObservedRoute } from '../library/firewater_routes.js';
 import { collectObservedGem } from '../library/firewater_targets.js';
 import { findReachableExplorationTarget } from '../library/firewater_exploration.js';
 import { approachFirewaterPlayer } from '../library/firewater_player.js';
@@ -21,7 +22,7 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
         const actionFnWithAgent = async () => {
             await actionFn(agent, ...args);
         };
-        const code_return = await agent.actions.runAction(`action:${actionLabel}`, actionFnWithAgent, { timeout, resume });
+        const code_return = await agent.actions.runAction(`action:${actionLabel}`, actionFnWithAgent, { timeout: timeout < 0 && agent.firewater?.isRunning() ? 0.75 : timeout, resume });
         if (code_return.interrupted && !code_return.timedout)
             return;
         return code_return.message;
@@ -31,7 +32,7 @@ function runAsAction (actionFn, resume = false, timeout = -1) {
 }
 
 export function validateObservedCoordinateTarget(agent, x, y, z, action, options = {}) {
-    const target = agent.vision_interpreter?.getRecentObservedTarget(x, y, z);
+    const target = options.target || agent.vision_interpreter?.getRecentObservedTarget(x, y, z);
     const validationError = agent.firewater?.validateObservedTarget(target, action);
     if (validationError) return { error: validationError };
 
@@ -478,7 +479,7 @@ export const actionsList = [
             if (!convoManager.isOtherAgent(player_name))
                 return player_name + ' is a human. Speak to them in ordinary chat without !startConversation or !endConversation.';
             if (agent.firewater?.isRunning() && !agent.firewater.canInitiateConversation(player_name)) {
-                return `Explore and observe at least 3 distinct new viewpoints before asking ${agent.firewater.getPartnerName()} for Firewater target information.`;
+                return `Coordinate with the active partner ${agent.firewater.getPartnerName()}.`;
             }
             if (convoManager.inConversation() && !convoManager.inConversation(player_name)) 
                 convoManager.forceEndCurrentConversation();
@@ -496,8 +497,7 @@ export const actionsList = [
                 conversationOptions
             );
             if (started && agent.firewater?.isRunning()) {
-                agent.firewater.markIntelExchangeStarted();
-                return `Started a short Firewater intelligence exchange with ${player_name}.`;
+                return `Started a short Firewater coordination exchange with ${player_name}.`;
             }
         }
     },
@@ -516,21 +516,46 @@ export const actionsList = [
     },
     {
         name: '!observeFirewater',
-        description: 'Capture front/right/back/left stage views and list exact visible targets within 16 blocks. Coordinate permissions last 30 seconds.',
+        description: 'Refresh visible targets, ladders, device power, plate occupants and changes without image analysis. Coordinates last 30 seconds.',
+        perform: async function(agent) {
+            const result = await agent.vision_interpreter.observeFirewater({ visual: false });
+            agent.firewater?.recordExplorationObservation?.();
+            return result;
+        }
+    },
+    {
+        name: '!inspectFirewater',
+        description: 'Inspect four surrounding views and the upper approach to the nearest route when the route or height is unclear; then refresh current visible coordinates. Slower than observeFirewater.',
         perform: async function(agent) {
             let result = '';
-            const actionResult = await agent.actions.runAction('action:observeFirewater', async () => {
-                result = await agent.vision_interpreter.observeFirewater();
+            const action = await agent.actions.runAction('action:observeFirewater', async () => {
+                result = await agent.vision_interpreter.observeFirewater({ visual: true });
             });
-            const progress = agent.firewater?.recordExplorationObservation?.();
-            if (progress) {
-                const guidance = progress.mayRequestIntel
-                    ? `You have now checked ${progress.searched} distinct new viewpoints. If the needed target is still absent, you may ask ${agent.firewater.getPartnerName()}; if you found something they likely need, you may report it. Include what you saw and where you searched.`
-                    : `Exploration progress: ${progress.searched}/${progress.required} distinct new viewpoints checked before requesting partner target information.`;
-                result = `${result}\n${guidance}`;
-            }
-            return result || actionResult.message;
+            return result || action.message;
         }
+    },
+    {
+        name: '!releaseFirewaterHold',
+        description: 'Release your plate/exit hold only after the dependent partner finishes or explicitly changes the plan. Does not resume a human-requested pause.',
+        perform: function(agent) {
+            if (!agent.firewater?.isRunning()) return 'No Firewater stage is active.';
+            agent.firewater.loop.hold = null;
+            return 'Cooperative hold released. Choose the next action from current evidence.';
+        }
+    },
+    {
+        name: '!traverseFirewater',
+        description: 'Traverse an observed ladder or passage to its safe landing. Use this for a known nearby route instead of blind exploration; report completion to a partner holding support.',
+        params: {
+            x: { type: 'int', description: 'Observed route block x.' },
+            y: { type: 'int', description: 'Observed route block y.', domain: [-64, 320] },
+            z: { type: 'int', description: 'Observed route block z.' },
+        },
+        perform: runAsAction(async (agent, x, y, z) => {
+            const authorized = validateObservedCoordinateTarget(agent, x, y, z, 'traverse');
+            if (authorized.error) { skills.log(agent.bot, authorized.error); return; }
+            skills.log(agent.bot, await traverseObservedRoute(agent, authorized.target, skills.goToGoal));
+        }),
     },
     {
         name: '!exploreFirewater',
@@ -552,10 +577,6 @@ export const actionsList = [
                 skills.log(agent.bot, 'Cannot explore safely because the active Firewater stage has no bounds.');
                 return;
             }
-            if (agent.firewater.hasPendingExplorationObservation()) {
-                skills.log(agent.bot, 'Observe the current new viewpoint with !observeFirewater before moving again.');
-                return;
-            }
 
             const start = agent.bot.entity.position.clone();
             const candidates = agent.firewater.prepareExploration(start, distance);
@@ -570,7 +591,7 @@ export const actionsList = [
                 if (agent.firewater.recordExplorationViewpoint(start, end, distance, target)) {
                     skills.log(
                         agent.bot,
-                        `Reached unvisited viewpoint ${end.floored()} toward nearby target (${target.x}, ${target.y}, ${target.z}). Run !observeFirewater now.`
+                        `Moved to viewpoint ${end.floored()} (progress is checked by the next observation) toward nearby target (${target.x}, ${target.y}, ${target.z}). The loop will observe this viewpoint before the next decision.`
                     );
                     return;
                 }
@@ -578,12 +599,8 @@ export const actionsList = [
                 agent.firewater.recordExplorationTargetFailure(start, target);
             }
 
-            const progress = agent.firewater.recordExplorationFailure();
-            if (progress.mayRequestIntel) {
-                skills.log(agent.bot, `Three exploration attempts could not reach a new viewpoint. You may ask ${agent.firewater.getPartnerName()} for route or target information now.`);
-            } else {
-                skills.log(agent.bot, `Could not reach a sufficiently new viewpoint (${progress.failed}/${progress.required} failed attempts before partner help is allowed). The next !exploreFirewater attempt will check other targets.`);
-            }
+            agent.firewater.recordExplorationFailure();
+            skills.log(agent.bot, 'No new safe viewpoint reached. Try a different route, inspect the scene, or ask the partner for specific help.');
         })
     },
     {
@@ -615,9 +632,12 @@ export const actionsList = [
                 return;
             }
 
+            const generation = agent.firewater.generation;
+            const target = authorized.target;
             const reached = await skills.goToPosition(agent.bot, x, y, z, 2);
-            if (!reached) return;
-            authorized = validateObservedCoordinateTarget(agent, x, y, z, 'activate', { maxDistance: 5 });
+            if (agent.bot.interrupt_code || generation !== agent.firewater.generation) return;
+            if (!reached) { skills.log(agent.bot, 'No safe route to this device. Find another approach or prerequisite.'); return; }
+            authorized = validateObservedCoordinateTarget(agent, x, y, z, 'activate', { maxDistance: 5, target });
             if (authorized.error) {
                 skills.log(agent.bot, authorized.error);
                 return;
@@ -625,7 +645,7 @@ export const actionsList = [
             await agent.bot.lookAt(authorized.block.position.offset(0.5, 0.5, 0.5), true);
             await agent.bot.activateBlock(authorized.block);
             skills.log(agent.bot, `Activated ${authorized.block.name} at (${x}, ${y}, ${z}). Re-observe before another coordinate action.`);
-            agent.vision_interpreter.clearFirewaterObservations();
+            agent.vision_interpreter.invalidateFirewaterCoordinates();
         })
     },
     {
@@ -644,15 +664,17 @@ export const actionsList = [
                 return;
             }
 
+            const generation = agent.firewater.generation;
             const isPressurePlate = authorized.target.kind === 'pressure_plate';
             const standingY = isPressurePlate ? y : y + 1;
             const reached = await skills.goToPosition(agent.bot, x + 0.5, standingY, z + 0.5, 0);
+            if (agent.bot.interrupt_code || generation !== agent.firewater.generation) return;
             if (!reached) {
                 skills.log(agent.bot, `Could not reach ${authorized.block.name} at (${x}, ${y}, ${z}) by a safe path.`);
                 return;
             }
             // A floor target may no longer be ray-visible once the bot is on
-            // top of it. Recheck freshness, role/bounds, and current block;
+            // top of it. Recheck the authorized role/bounds and current block;
             // exact feet/below position is the post-arrival spatial proof.
             const stillAuthorized = validateObservedCoordinateTarget(
                 agent,
@@ -660,7 +682,7 @@ export const actionsList = [
                 y,
                 z,
                 'stand',
-                { maxDistance: false, requireLineOfSight: false }
+                { maxDistance: false, requireLineOfSight: false, target: authorized.target }
             );
             if (stillAuthorized.error) {
                 skills.log(agent.bot, stillAuthorized.error);
@@ -676,6 +698,7 @@ export const actionsList = [
                 skills.log(agent.bot, `Could not stand exactly on ${stillAuthorized.block.name} at (${x}, ${y}, ${z}).`);
                 return;
             }
+            agent.firewater.loop.hold = `${stillAuthorized.block.name} at (${x}, ${y}, ${z})`;
             skills.log(agent.bot, `Standing on ${stillAuthorized.block.name} at (${x}, ${y}, ${z}). Hold position unless the plan changes.`);
         })
     },

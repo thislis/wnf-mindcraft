@@ -68,12 +68,12 @@ test('interrupted exploration neither probes nor records failed goals', async ()
     assert.deepEqual(failed, []);
 });
 
-test('incomplete path searches are not accepted and probe batches are bounded', async () => {
+test('incomplete path searches are bounded without marking routes permanently unreachable', async () => {
     const bot = corridor('lava');
     let probes = 0;
     bot.pathfinder.getPathTo = () => { probes++; return { status: 'timeout' }; };
     const failed = [];
     assert.equal(await findReachableExplorationTarget(bot, profile('ember'), Array(40).fill(near), p => failed.push(p)), null);
     assert.equal(probes, 24);
-    assert.equal(failed.length, 24);
+    assert.equal(failed.length, 0);
 });

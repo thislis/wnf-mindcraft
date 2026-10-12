@@ -31,6 +31,14 @@ export class History {
     }
 
     async summarizeMemories(turns) {
+        if (this.agent.firewater?.isRunning()) {
+            // Current structured evidence is injected into every decision prompt.
+            // Do not ask a second model to reinterpret old hazards or permissions.
+            const session = this.agent.firewater;
+            this.memory = `Firewater ${session.session?.stage || ''}, attempt ${session.session?.attempt || ''}. ` +
+                'Use CURRENT LOOP STATE and fresh observations. ' + (session.loop?.lastResult || '').slice(0, 320);
+            return;
+        }
         console.log("Storing memories...");
         try {
             this.memory = await this.agent.prompter.promptMemSaving(turns);

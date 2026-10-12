@@ -21,6 +21,7 @@ export function parseTargetContracts(fields) {
 
 export function targetPriority(target, role) {
     const allowed = target.role === 'any' || target.role === role;
+    if (target.kind === 'route') return 1;
     if (target.kind === 'gem' && allowed) return 0;
     if (['activator', 'pressure_plate'].includes(target.kind) && allowed && !target.powered) return 1;
     if (target.name === (role === 'wade' ? 'water' : 'lava')) return 2;
@@ -58,7 +59,7 @@ export async function collectObservedGem(agent, target, navigate) {
         if (!active()) return 'Gem collection interrupted.';
         const block = bot.blockAt(position);
         if (block?.name === 'air') {
-            agent.vision_interpreter.clearFirewaterObservations();
+            agent.vision_interpreter.invalidateFirewaterCoordinates?.();
             return `Server removed the collected ${target.name} gem at (${position.x}, ${position.y}, ${position.z}). Re-observe for the next target.`;
         }
         if (!block || block.name !== target.name) return 'Gem state changed unexpectedly. Re-observe before continuing.';
