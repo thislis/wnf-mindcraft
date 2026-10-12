@@ -1,7 +1,13 @@
+import { isHumanAction } from './firewater_user_action.js';
+import { createRoleAwareMovements } from './library/firewater_movements.js';
+import minecraftData from 'minecraft-data';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Vec3 } from 'vec3';
 import { Agent } from './agent.js';
+import { validateObservedCoordinateTarget } from './commands/actions.js';
+import { executeCommand, getCommand, isFirewaterCommandAllowed } from './commands/index.js';
+
 import { Prompter } from '../models/prompter.js';
 import { FirewaterHumanControl } from './firewater_human_control.js';
 import { approachFirewaterPlayer } from './library/firewater_player.js';
@@ -216,6 +222,66 @@ test('a question does not cancel a cooperative plate hold', async () => {
     agent.firewater.loop.hold = 'west plate';
     await control.run('Human', 'where is the exit?', async () => {
         assert.equal(agent.firewater.loop.hold, 'west plate');
+        await Promise.resolve();
+    });
+});
+
+test('human risk override is scoped to the active request, bot and generation', async () => {
+    const { agent, control, session } = fixture();
+    agent.bot.registry = minecraftData('1.21.6');
+    agent.bot.inventory = { items: () => [] };
+    const profile = { firewater_role: 'wade', firewater_active_bounds: session.session.bounds };
+    assert.equal(isHumanAction(agent.bot), false);
+    await control.run('Human', '나한테 와', async () => {
+        assert.equal(isHumanAction(agent), true);
+        assert.equal(isHumanAction(agent.bot), true);
+        assert.equal(isHumanAction({}), false);
+        const movements = createRoleAwareMovements(agent.bot, profile);
+        assert.equal(movements.blocksToAvoid.size, 0);
+        assert.equal(movements.exclusionAreasStep.length, 0);
+        assert.equal(movements.allowParkour, true);
+        assert.equal(movements.canDig, false, 'movement must not silently excavate puzzle blocks');
+        session.generation++;
+        assert.equal(isHumanAction(agent), false);
+        await Promise.resolve();
+    });
+    assert.equal(isHumanAction(agent), false);
+    assert.equal(createRoleAwareMovements(agent.bot, profile).blocksToAvoid.has(agent.bot.registry.blocksByName.lava.id), true);
+});
+
+test('human requests cross stage bounds and bypass stale coordinate and role safety guards', async () => {
+    const { agent, control, session, player } = fixture();
+    player.entity.position.x = 100;
+    agent.bot.blockAt = position => ({ name: 'lava', position });
+    session.getObservationContext = () => ({});
+    session.validateObservedTarget = () => 'blocked by autonomous safety';
+    await control.run('Human', 'go to me outside the puzzle', async () => {
+        assert.equal(isFirewaterCommandAllowed(agent, '!goToCoordinates'), true);
+        assert.equal(validateObservedCoordinateTarget(agent, 100, 64, 10, 'stand').error, undefined);
+        const result = await approachFirewaterPlayer(agent, 'AL_Gamja', 2, bot => {
+            bot.entity.position = player.entity.position.clone();
+            return Promise.resolve();
+        });
+        assert.match(result, /Reached/);
+    });
+    assert.equal(isFirewaterCommandAllowed(agent, '!goToCoordinates'), false);
+    assert.match(validateObservedCoordinateTarget(agent, 100, 64, 10, 'stand').error, /autonomous safety/);
+});
+
+test('a Korean human movement request bypasses old hold and failure guards; questions keep holds', async t => {
+    const { agent, control, session } = fixture();
+    const { FirewaterLoop } = await import('./firewater_loop.js');
+    session.loop = new FirewaterLoop();
+    session.loop.hold = 'west plate';
+    session.loop.failures.set('!goToPlayer:AL_Gamja,2', { ...agent.bot.entity.position });
+    t.mock.method(getCommand('!goToPlayer'), 'perform', () => Promise.resolve('Moved as requested.'));
+    await control.run('Human', '나한테 와', async () => {
+        assert.equal(await executeCommand(agent, '!goToPlayer("AL_Gamja", 2)'), 'Moved as requested.');
+        assert.equal(session.loop.hold, null);
+    });
+    session.loop.hold = 'west plate';
+    await control.run('Human', 'where are you?', async () => {
+        assert.equal(session.loop.hold, 'west plate');
         await Promise.resolve();
     });
 });

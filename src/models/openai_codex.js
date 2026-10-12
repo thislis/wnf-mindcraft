@@ -69,57 +69,57 @@ export function extractTextFromCodexEvent(eventName, payload) {
     return { delta: '', fallback: '' };
 }
 
-export async function readCodexSSE(stream) {
+export async function readCodexSSE(stream, { signal, onEvent = () => {} } = {}) {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let outputText = '';
     let fallbackText = '';
+    const cancel = () => { reader.cancel().catch(() => {}); };
+    signal?.addEventListener('abort', cancel, { once: true });
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done)
-            break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const messages = buffer.split(/\r?\n\r?\n/);
-        buffer = messages.pop() || '';
-
-        for (const rawMessage of messages) {
-            const { event, data } = parseSSEMessage(rawMessage);
-            if (!data || data === '[DONE]')
-                continue;
-
-            let payload;
-            try {
-                payload = JSON.parse(data);
-            } catch (err) {
-                continue;
-            }
-
-            const text = extractTextFromCodexEvent(event, payload);
-            outputText += text.delta || '';
-            if ((text.fallback || '').length >= fallbackText.length)
-                fallbackText = text.fallback || fallbackText;
+    function consume(rawMessage) {
+        const { event, data } = parseSSEMessage(rawMessage);
+        if (!data) return false;
+        if (data === '[DONE]') throw new Error('Codex stream ended without response.completed.');
+        let payload;
+        try { payload = JSON.parse(data); } catch { return false; }
+        const type = payload.type || event;
+        onEvent(type, payload);
+        if (['response.failed', 'response.incomplete', 'error'].includes(type))
+            throw new Error(`Codex ${type}: ${payload.response?.error?.message || payload.error?.message || payload.response?.incomplete_details?.reason || 'request did not complete'}`);
+        const text = extractTextFromCodexEvent(type, payload);
+        outputText += text.delta || '';
+        if ((text.fallback || '').length >= fallbackText.length) fallbackText = text.fallback || fallbackText;
+        if (type === 'response.completed') {
+            if (payload.response?.status && payload.response.status !== 'completed')
+                throw new Error(`Codex response status: ${payload.response.status}`);
+            return true;
         }
+        return false;
     }
 
-    const finalBuffer = buffer.trim();
-    if (finalBuffer) {
-        const { event, data } = parseSSEMessage(finalBuffer);
-        if (data && data !== '[DONE]') {
-            try {
-                const text = extractTextFromCodexEvent(event, JSON.parse(data));
-                outputText += text.delta || '';
-                if ((text.fallback || '').length >= fallbackText.length)
-                    fallbackText = text.fallback || fallbackText;
-            } catch (err) {
-                // Ignore partial or non-JSON terminal chunks.
+    try {
+        while (true) {
+            signal?.throwIfAborted();
+            const { done, value } = await reader.read();
+            signal?.throwIfAborted();
+            buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+            const messages = buffer.split(/\r?\n\r?\n/);
+            buffer = messages.pop() || '';
+            for (const rawMessage of messages) {
+                if (consume(rawMessage)) return outputText || fallbackText;
+            }
+            if (done) {
+                if (buffer.trim() && consume(buffer)) return outputText || fallbackText;
+                throw new Error('Codex stream disconnected before response.completed.');
             }
         }
+    } finally {
+        signal?.removeEventListener('abort', cancel);
+        cancel();
+        reader.releaseLock();
     }
-
-    return outputText || fallbackText;
 }
 
 function cloneTurns(turns) {
@@ -166,6 +166,8 @@ export function createCodexVisionBody(model, turns, systemMessage, imageBuffer, 
     };
     if (params.reasoning)
         body.reasoning = params.reasoning;
+    if (params.text?.verbosity)
+        body.text = { verbosity: params.text.verbosity };
     return body;
 }
 
@@ -177,37 +179,66 @@ export function isExplicitImageModalityRejection(status, body = '') {
     return namesImageInput && rejectsIt;
 }
 
-async function postStreamingResponse(baseUrl, token, body, extraHeaders = {}) {
-    const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/responses`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Accept': 'text/event-stream',
-            ...extraHeaders,
-        },
-        body: JSON.stringify(body),
-    });
+let requestSequence = 0;
 
-    if (!response.ok) {
-        return {
-            ok: false,
-            status: response.status,
-            errorBody: await response.text(),
-        };
-    }
-    if (!response.body) {
-        return {
-            ok: false,
-            status: response.status,
-            errorBody: 'The response body was empty.',
-        };
-    }
-    return {
-        ok: true,
-        status: response.status,
-        text: await readCodexSSE(response.body),
+async function postStreamingResponse(baseUrl, token, body, extraHeaders = {}, options = {}) {
+    const started = performance.now();
+    const elapsed = () => Math.round(performance.now() - started);
+    const deadline = new AbortController();
+    const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 45_000;
+    const timer = setTimeout(() => deadline.abort(new DOMException('Codex request timed out.', 'TimeoutError')), timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
+    const metrics = {
+        request: ++requestSequence, model: body.model, kind: options.kind || 'text',
+        effort: body.reasoning?.effort || 'default', started_at: new Date().toISOString(),
+        input_chars: (body.instructions?.length || 0) + JSON.stringify(body.input).length,
+        timeout_ms: timeoutMs,
     };
+    console.log('[codex-request]', JSON.stringify(metrics));
+    try {
+        signal.throwIfAborted();
+        const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/responses`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream',
+                ...extraHeaders,
+            },
+            body: JSON.stringify(body), signal,
+        });
+        metrics.headers_ms = elapsed();
+        metrics.status = response.status;
+        if (!response.ok) {
+            metrics.outcome = 'http_error';
+            return { ok: false, status: response.status, errorBody: await response.text() };
+        }
+        if (!response.body) throw new Error('Codex response body was empty.');
+        const text = await readCodexSSE(response.body, {
+            signal,
+            onEvent(type, payload) {
+                metrics.first_event_ms ??= elapsed();
+                if (type === 'response.output_text.delta' && payload.delta)
+                    metrics.first_text_ms ??= elapsed();
+                if (type === 'response.completed') {
+                    const usage = payload.response?.usage;
+                    metrics.input_tokens = usage?.input_tokens;
+                    metrics.cached_input_tokens = usage?.input_tokens_details?.cached_tokens;
+                    metrics.output_tokens = usage?.output_tokens;
+                    metrics.reasoning_tokens = usage?.output_tokens_details?.reasoning_tokens;
+                }
+            },
+        });
+        metrics.outcome = 'completed';
+        return { ok: true, status: response.status, text };
+    } catch (error) {
+        metrics.outcome = signal.aborted ? signal.reason?.name || 'aborted' : 'error';
+        throw error;
+    } finally {
+        clearTimeout(timer);
+        metrics.total_ms = elapsed();
+        console.log('[codex-response]', JSON.stringify(metrics));
+    }
 }
 
 function mapCodexError(status, body) {
@@ -232,7 +263,7 @@ export class OpenAICodex {
         this.params = params || {};
     }
 
-    async sendRequest(turns, systemMessage, stop_seq='***') {
+    async sendRequest(turns, systemMessage, stop_seq='***', options = {}) {
         const model = this.model_name || 'gpt-5.5';
         const messages = strictFormat(turns);
         const body = {
@@ -245,34 +276,29 @@ export class OpenAICodex {
 
         if (this.params.reasoning)
             body.reasoning = this.params.reasoning;
+        if (this.params.text?.verbosity)
+            body.text = { verbosity: this.params.text.verbosity };
 
-        try {
-            const token = getCodexAccessToken().value;
-            console.log('Awaiting openai-codex response from model', model);
-            const response = await postStreamingResponse(this.url, token, body);
-            if (!response.ok)
-                return mapCodexError(response.status, response.errorBody);
+        const token = getCodexAccessToken().value;
+        console.log('Awaiting openai-codex response from model', model);
+        const response = await postStreamingResponse(this.url, token, body, {}, { ...options, timeoutMs: this.params.timeout_ms });
+        if (!response.ok)
+            throw new Error(mapCodexError(response.status, response.errorBody));
 
-            let result = response.text;
-            const stopSeqIndex = result.indexOf(stop_seq);
-            result = stopSeqIndex !== -1 ? result.slice(0, stopSeqIndex) : result;
-            return result || 'Codex backend returned no text.';
-        } catch (err) {
-            if (err?.message?.includes('Codex OAuth token not found'))
-                return err.message;
-            console.log(err);
-            return 'Codex backend disconnected, try again.';
-        }
+        let result = response.text;
+        const stopSeqIndex = result.indexOf(stop_seq);
+        result = stopSeqIndex !== -1 ? result.slice(0, stopSeqIndex) : result;
+        return result || 'Codex backend returned no text.';
     }
 
-    async sendVisionRequest(messages, systemMessage, imageBuffer) {
+    async sendVisionRequest(messages, systemMessage, imageBuffer, options = {}) {
         const model = this.model_name || 'gpt-5.5';
         let body;
         try {
             body = createCodexVisionBody(model, messages, systemMessage, imageBuffer, this.params);
             const token = getCodexAccessToken().value;
             console.log('Awaiting openai-codex vision response from model', model);
-            const privateResponse = await postStreamingResponse(this.url, token, body);
+            const privateResponse = await postStreamingResponse(this.url, token, body, {}, { ...options, kind: 'vision', timeoutMs: this.params.timeout_ms });
             if (privateResponse.ok)
                 return privateResponse.text || 'Codex backend returned no vision text.';
 
@@ -292,13 +318,14 @@ export class OpenAICodex {
                 STANDARD_OPENAI_BASE_URL,
                 getKey(OPENAI_API_KEY),
                 body,
-                standardHeaders
+                standardHeaders, { ...options, kind: 'vision-fallback', timeoutMs: this.params.timeout_ms }
             );
             if (!fallbackResponse.ok) {
                 return `Standard OpenAI vision fallback failed with HTTP ${fallbackResponse.status}: ${fallbackResponse.errorBody}`;
             }
             return fallbackResponse.text || 'Standard OpenAI vision fallback returned no text.';
         } catch (err) {
+            if (options.signal?.aborted || ['AbortError', 'TimeoutError'].includes(err?.name)) throw err;
             if (err?.message?.includes('Codex OAuth token not found'))
                 return err.message;
             console.log(err);

@@ -1,3 +1,5 @@
+import { runHumanAction } from './firewater_user_action.js';
+
 // Explicit continuation requests switch control modes; they are not six-action tasks.
 export function isFirewaterResumeRequest(message) {
     const text = String(message).trim().toLowerCase().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
@@ -38,7 +40,7 @@ export class FirewaterHumanControl {
                     await agent.routeResponse?.(source, 'Resuming the stage goal.');
                     return true;
                 }
-                return await respond();
+                return await runHumanAction(agent, respond);
             } catch (error) {
                 // A failed human turn must not silently restart unrelated exploration.
                 this.holding = true;
@@ -71,7 +73,10 @@ export class FirewaterHumanControl {
         const { source, message } = this.request;
         return `HUMAN REQUEST IN PROGRESS from ${source}: ${JSON.stringify(message)}\n` +
             `Handle this before autonomous gem collection or exploration. For an arrival request use !goToPlayer("${source}", 2). ` +
-            'Observe before a requested device action. Ask if ambiguous; report actual blockers. Stay after arrival/hold. ' +
+            'Execute the requested action without a safety assessment or permission question: the human chooses in-game risk. ' +
+            'Hazards, role restrictions, stage bounds, old holds and failed approaches do not veto this request. ' +
+            'Use !goToCoordinates for supplied coordinates and !traverseFirewater for a ladder; climb even without a verified upper landing. ' +
+            'Observe only to locate an unknown target. Report actual movement failures, not safety refusals. Stay after arrival/hold. ' +
             'For a request to clear/continue the whole game, call !resumeFirewater immediately; do not try to finish the stage in this short human turn. Use !waitForInstructions to wait. Reply briefly in ordinary chat.';
     }
 }

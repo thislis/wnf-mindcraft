@@ -1,3 +1,5 @@
+import { approachFirewaterPlayer } from './firewater_player.js';
+import { runHumanAction } from '../firewater_user_action.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -101,9 +103,93 @@ test('an observed air passage reaches its exact floor, never a radius before the
     agent.bot.entity.position = new Vec3(0.5, 64, 0.5);
     const result = await traverseObservedRoute(agent, target, async (bot, goal) => {
         assert.equal(goal.rangeSq, undefined);
-        assert.ok(goal.x > target.position.x, 'landing is beyond the opening');
+        assert.ok(goal.x >= target.position.x, 'first reach the entrance floor, then move beyond it');
         bot.entity.position = new Vec3(goal.x + 0.5, goal.y, goal.z + 0.5);
         await Promise.resolve();
     });
-    assert.match(result, /verified landing/);
+    assert.match(result, /Traversed passage; verified arrival/);
+    assert.ok(agent.bot.entity.position.x > target.position.x + 0.5);
+});
+
+for (const role of ['wade', 'ember']) {
+    test(`${role}: a human-requested ladder climbs despite an opposite liquid or poison landing`, async () => {
+        const { agent, target, state } = ladderScene(role, role === 'wade' ? 'lava' : 'water');
+        state.floor = 'green_concrete';
+        const control = new Map();
+        let ticks = 0;
+        let held = false;
+        agent.firewater.humanControl = { request: { message: 'climb' }, hold() { held = true; } };
+        agent.bot.entity.position = new Vec3(4.5, 64, 0.5);
+        agent.bot.lookAt = () => Promise.resolve();
+        agent.bot.setControlState = (key, value) => control.set(key, value);
+        agent.bot.clearControlStates = () => control.clear();
+        agent.bot.waitForTicks = () => {
+            assert.equal(control.get('forward'), true);
+            assert.equal(control.get('jump'), true);
+            agent.bot.entity.position.y += 0.2;
+            ticks++;
+            return Promise.resolve();
+        };
+        const result = await runHumanAction(agent, () => traverseObservedRoute(agent, target, (bot, goal) => {
+            bot.entity.position = new Vec3(goal.x + 0.5, goal.y, goal.z + 0.5);
+            return Promise.resolve();
+        }));
+        assert.match(result, /Climbed the requested ladder/);
+        assert.ok(ticks > 0);
+        assert.equal(held, true);
+        assert.equal(control.size, 0);
+        assert.ok(agent.bot.entity.position.y >= 66);
+    });
+}
+
+test('human ladder control stops on collision and reset without claiming arrival', async () => {
+    for (const reset of [false, true]) {
+        const { agent, target } = ladderScene('wade');
+        agent.firewater.humanControl = { request: { message: 'climb' } };
+        agent.bot.entity.position = new Vec3(4.5, 64, 0.5);
+        let cleared = false;
+        agent.bot.lookAt = () => Promise.resolve();
+        agent.bot.setControlState = () => {};
+        agent.bot.clearControlStates = () => { cleared = true; };
+        agent.bot.waitForTicks = () => { if (reset) agent.firewater.generation++; return Promise.resolve(); };
+        const result = await runHumanAction(agent, () => traverseObservedRoute(agent, target, () => assert.fail('already at ladder')));
+        assert.match(result, reset ? /interrupted/ : /no vertical progress/);
+        assert.doesNotMatch(result, /Climbed/);
+        assert.equal(cleared, true);
+    }
+});
+
+test('a human upstairs request uses ladder controls before approaching the player', async () => {
+    const { agent } = ladderScene('wade');
+    agent.firewater.session = { bounds: agent.prompter.profile.firewater_active_bounds };
+    agent.firewater.humanControl = { request: { message: '나한테 와' }, hold() {} };
+    agent.bot.players = { Human: { username: 'Human', entity: { position: new Vec3(5.5, 67, 0.5) } } };
+    agent.bot.entity.position = new Vec3(4.5, 64, 0.5);
+    const controls = new Map();
+    let ticks = 0;
+    agent.bot.lookAt = () => Promise.resolve();
+    agent.bot.setControlState = (key, value) => controls.set(key, value);
+    agent.bot.clearControlStates = () => controls.clear();
+    agent.bot.waitForTicks = () => { ticks++; agent.bot.entity.position.y += 0.2; return Promise.resolve(); };
+    const result = await runHumanAction(agent, () => approachFirewaterPlayer(agent, 'Human', 2, (bot, goal) => {
+        assert.ok(ticks > 0, 'direct ladder ascent precedes another player path search');
+        bot.entity.position = new Vec3(goal.x, goal.y, goal.z);
+        return Promise.resolve();
+    }));
+    assert.match(result, /Reached Human/);
+    assert.equal(controls.size, 0);
+});
+
+test('a human can climb to the top before an upper landing is loaded', async () => {
+    const { agent, target, state } = ladderScene('wade');
+    state.loaded = false;
+    agent.firewater.humanControl = { request: { message: 'climb' }, hold() {} };
+    agent.bot.entity.position = new Vec3(4.5, 64, 0.5);
+    agent.bot.lookAt = () => Promise.resolve();
+    agent.bot.setControlState = () => {};
+    agent.bot.clearControlStates = () => {};
+    agent.bot.waitForTicks = () => { agent.bot.entity.position.y += 0.2; return Promise.resolve(); };
+    const result = await runHumanAction(agent, () => traverseObservedRoute(agent, target, () => assert.fail('no loaded upper landing')));
+    assert.match(result, /Climbed the requested ladder/);
+    assert.equal(agent.firewater.loop.completedRoutes.size, 0, 'climbing alone does not claim a verified passage landing');
 });

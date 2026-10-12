@@ -102,7 +102,7 @@ export class FirewaterLoop {
         if (!['!observeFirewater', '!inspectFirewater'].includes(command))
             this.lastResult = `${command}: ${String(result).slice(-450)}`;
         const targeted = ['!traverseFirewater', '!collectGemAt', '!activateBlockAt', '!standOnBlock'].includes(command);
-        if (targeted && /no safe route|could not reach|outside the gem|did not confirm|no path|pathfinding|timed out|Code threw exception/i.test(result) && position) {
+        if (targeted && /passage (?:planning failed|path not found|movement failed|arrival unconfirmed|geometry changed)|no safe route|could not reach|outside the gem|did not confirm|no path|pathfinding|timed out|Code threw exception/i.test(result) && position) {
             this.failures.set(this.targetKey(command, args), { ...position });
             if (this.failures.size > 32) this.failures.delete(this.failures.keys().next().value);
         }

@@ -125,3 +125,111 @@ test('private non-modality errors never fall back and missing standard key is ex
         assert.match(noFallback, /Set OPENAI_API_KEY/);
     });
 });
+
+function eventStream(events, { open = false, cancel = () => {} } = {}) {
+    return new ReadableStream({
+        start(controller) {
+            const text = events.map(payload => `data: ${JSON.stringify(payload)}\n\n`).join('');
+            controller.enqueue(new TextEncoder().encode(text));
+            if (!open) controller.close();
+        }, cancel,
+    });
+}
+
+test('completed SSE returns without waiting for socket close and cancels the reader', async () => {
+    let cancelled = false;
+    const stream = eventStream([
+        { type: 'response.output_text.delta', delta: '!observeFirewater' },
+        { type: 'response.completed', response: { status: 'completed' } },
+    ], { open: true, cancel() { cancelled = true; } });
+    assert.equal(await readCodexSSE(stream), '!observeFirewater');
+    assert.equal(cancelled, true);
+});
+
+test('partial or failed streams never return an executable partial command', async () => {
+    for (const terminal of [null, 'response.failed', 'response.incomplete', 'error']) {
+        const events = [{ type: 'response.output_text.delta', delta: '!exploreFirewater(8)' }];
+        if (terminal) events.push({ type: terminal });
+        await assert.rejects(readCodexSSE(eventStream(events)), /disconnected|did not complete/);
+    }
+});
+
+test('SSE handles split UTF-8 and final completion without a trailing separator', async () => {
+    const bytes = new TextEncoder().encode('data: ' + JSON.stringify({ type: 'response.completed',
+        response: { output: [{ content: [{ text: '도착했습니다' }] }] } }));
+    const stream = new ReadableStream({ start(controller) {
+        for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+        controller.close();
+    } });
+    assert.equal(await readCodexSSE(stream), '도착했습니다');
+});
+
+test('text and vision send low effort and verbosity but keep client timeout off the wire', async t => {
+    await withMockedEnvironment(async () => {
+        const calls = [];
+        const logs = [];
+        t.mock.method(console, 'log', (...args) => logs.push(args));
+        globalThis.fetch = (url, options) => {
+            calls.push(JSON.parse(options.body));
+            assert.ok(options.signal instanceof AbortSignal);
+            return Promise.resolve(new Response(eventStream([
+                { type: 'response.output_text.delta', delta: 'ok' },
+                { type: 'response.completed', response: { usage: { input_tokens: 100,
+                    input_tokens_details: { cached_tokens: 50 }, output_tokens: 12,
+                    output_tokens_details: { reasoning_tokens: 8 } } } },
+            ])));
+        };
+        const model = new OpenAICodex('gpt-6.1-sol', 'https://private.example/codex', {
+            reasoning: { effort: 'low' }, text: { verbosity: 'low' }, timeout_ms: 1000,
+        });
+        assert.equal(await model.sendRequest([], 'choose'), 'ok');
+        assert.equal(await model.sendVisionRequest([], 'inspect', Buffer.from('image')), 'ok');
+        for (const body of calls) {
+            assert.deepEqual(body.reasoning, { effort: 'low' });
+            assert.deepEqual(body.text, { verbosity: 'low' });
+            assert.equal(body.timeout_ms, undefined);
+        }
+        const metrics = logs.filter(l => l[0] === '[codex-response]').map(l => JSON.parse(l[1]));
+        assert.equal(metrics.length, 2);
+        for (const m of metrics) {
+            assert.equal(m.reasoning_tokens, 8);
+            assert.equal(m.cached_input_tokens, 50);
+            assert.ok(m.total_ms >= m.first_text_ms);
+            assert.equal(m.outcome, 'completed');
+        }
+    });
+});
+
+test('deadline aborts the transport even while waiting for the first response headers', async () => {
+    await withMockedEnvironment(async () => {
+        let signal;
+        globalThis.fetch = (_url, options) => {
+            signal = options.signal;
+            return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+        };
+        const model = new OpenAICodex('gpt-6.1-sol', 'https://private.example/codex', { timeout_ms: 10 });
+        await assert.rejects(model.sendRequest([], 'choose'), { name: 'TimeoutError' });
+        assert.equal(signal.aborted, true);
+    });
+});
+
+test('caller cancellation stops an open text or vision stream without fallback', async () => {
+    await withMockedEnvironment(async () => {
+        for (const vision of [false, true]) {
+            let cancelled = false;
+            let calls = 0;
+            const controller = new AbortController();
+            globalThis.fetch = () => {
+                calls++;
+                setTimeout(() => controller.abort(), 5);
+                return Promise.resolve(new Response(eventStream([], { open: true, cancel() { cancelled = true; } })));
+            };
+            const model = new OpenAICodex('gpt-6.1-sol', 'https://private.example/codex', {});
+            const options = { signal: controller.signal };
+            await assert.rejects(vision ? model.sendVisionRequest([], 'inspect', Buffer.from('image'), options)
+                : model.sendRequest([], 'choose', '***', options), { name: 'AbortError' });
+            assert.equal(cancelled, true);
+            assert.equal(calls, 1);
+        }
+    });
+});

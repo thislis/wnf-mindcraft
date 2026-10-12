@@ -364,8 +364,9 @@ export class Agent {
             let history = this.history.getHistory();
             const generation = this.firewater?.generation;
             let res;
+            const controller = new AbortController();
             try {
-                const pending = this.prompter.promptConvo(history);
+                const pending = this.prompter.promptConvo(history, { signal: controller.signal });
                 res = this.firewater?.isRunning()
                     ? await waitForFirewaterResponse(pending, () => checkInterrupt() || this.firewater.generation !== generation)
                     : await pending;
@@ -373,6 +374,8 @@ export class Agent {
                 await this.history.add('system', `Decision unavailable: ${error.message}`);
                 if (this.firewater?.humanControl.request) this.firewater.humanControl.hold();
                 break;
+            } finally {
+                controller.abort();
             }
             if (checkInterrupt()) break;
 
@@ -422,7 +425,7 @@ export class Agent {
                 if (command_name === '!traverseFirewater' && execute_res?.includes('Traversed ') && this.firewater?.loop?.plan?.phase === 'complete' &&
                     !this.firewater.loop.plan.reported) {
                     this.firewater.loop.plan.reported = true;
-                    await this.routeResponse(source, 'I reached the safe landing. Check whether anyone else still needs the supported passage before releasing it.');
+                    await this.routeResponse(source, 'I reached the route destination. Check whether anyone else still needs the supported passage before releasing it.');
                 }
                 if (this.firewater?.loop?.waiting && !this.firewater.loop.reported) {
                     this.firewater.loop.reported = true;

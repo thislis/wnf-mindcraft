@@ -1,3 +1,4 @@
+import { isHumanAction } from '../firewater_user_action.js';
 import * as mc from "../../utils/mcdata.js";
 import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
@@ -1099,9 +1100,9 @@ export async function goToGoal(bot, goal) {
     if (firewaterRole) {
         const path = await bot.pathfinder.getPathTo(final_movements, goal, pathfind_timeout);
         if (path.status === 'success') {
-            log(bot, `Found ${firewaterRole}-safe Firewater path.`);
+            log(bot, isHumanAction(bot) ? 'Following the human-requested route.' : `Found ${firewaterRole}-safe Firewater path.`);
         } else {
-            log(bot, `No complete ${firewaterRole}-safe path found; attempting safe navigation.`);
+            log(bot, isHumanAction(bot) ? 'Attempting the human-requested route.' : `No complete ${firewaterRole}-safe path found; attempting safe navigation.`);
         }
     }
     else if (await bot.pathfinder.getPathTo(nonDestructiveMovements, goal, pathfind_timeout).status === 'success') {

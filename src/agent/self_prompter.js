@@ -88,7 +88,9 @@ export class SelfPrompter {
                     await this._waitForManagedRetry();
                 } else {
                     no_command_count = 0;
-                    await new Promise(resolve => setTimeout(resolve, this.cooldown));
+                    await new Promise(resolve => setTimeout(resolve, managed
+                        ? (this.agent.prompter?.profile?.firewater_action_cooldown_ms ?? this.cooldown)
+                        : this.cooldown));
                 }
             }
         } catch (error) {
