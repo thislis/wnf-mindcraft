@@ -180,3 +180,58 @@ test('a managed request failure is not silently retried three times', async () =
     await assert.rejects(Prompter.prototype.promptConvo.call(prompter, []), /deadline/);
     assert.equal(calls, 1);
 });
+
+test('wait ends the human response immediately instead of spending the six-command budget', async () => {
+    const { agent } = decisionAgent('Human');
+    agent.actions = { stop: () => Promise.resolve(), cancelResume() {} };
+    let decisions = 0;
+    agent.prompter = { promptConvo() { decisions++; return Promise.resolve('!waitForInstructions'); } };
+    await Agent.prototype._handleMessage.call(agent, 'Human', 'come here', 6);
+    assert.equal(decisions, 1);
+    assert.equal(agent.firewater.humanControl.turnDone, true);
+    assert.equal(agent.firewater.loop.waiting, false, 'ordinary task completion does not stop the stage');
+});
+
+test('superseded model output is cancelled before it can execute another movement', async t => {
+    const { agent } = decisionAgent('Human');
+    let signal, finish;
+    agent.prompter = { promptConvo(_history, options) {
+        signal = options.signal;
+        agent.firewater.humanControl.request.cancelled = true;
+        return new Promise(resolve => { finish = resolve; });
+    } };
+    t.mock.method(getCommand('!exploreFirewater'), 'perform', () => assert.fail('obsolete command'));
+    await Agent.prototype._handleMessage.call(agent, 'Human', 'climb', 6);
+    assert.equal(signal.aborted, true);
+    finish('!exploreFirewater(8)');
+});
+
+test('regroup wakes blocked play when the human advances, with cooldown and hold protection', () => {
+    const { agent, loop } = decisionAgent('system');
+    agent.bot.players = { Human: { username: 'Human', entity: { position: new Vec3(10, 64, 0) } } };
+    const session = agent.firewater;
+    session.getPartnerName = () => 'Human';
+    session.conversationManager = { isOtherAgent: () => false };
+    const command = now => FirewaterSession.prototype.getRegroupCommand.call(session, now);
+    loop.waiting = true;
+    assert.equal(command(100000), '!goToPlayer("Human", 2)');
+    assert.equal(loop.waiting, false);
+    assert.equal(command(101000), null);
+    assert.equal(command(120000), null, 'stationary failure does not repeat immediately');
+    loop.failures.set(loop.targetKey('!goToPlayer', ['Human', 2]), { ...agent.bot.entity.position });
+    agent.bot.players.Human.entity.position.x = 14;
+    assert.equal(command(130000), '!goToPlayer("Human", 2)');
+    assert.equal(loop.failedApproach('!goToPlayer', ['Human', 2], agent.bot.entity.position), undefined);
+    loop.hold = 'needed plate';
+    assert.equal(command(200000), null);
+    loop.hold = null; session.humanControl.holding = true;
+    assert.equal(command(200000), null);
+});
+
+test('ladder and movement failures are remembered before the next decision', () => {
+    const { loop, agent } = decisionAgent('system');
+    for (const error of ['Ladder movement failed: blocked', 'Ladder traversal failed: no progress after realignment']) {
+        loop.recordResult('!traverseFirewater', [0,64,0], error, agent.bot.entity.position);
+        assert.ok(loop.failedApproach('!traverseFirewater', [0,68,0], agent.bot.entity.position));
+    }
+});

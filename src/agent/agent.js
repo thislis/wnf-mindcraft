@@ -297,6 +297,7 @@ export class Agent {
             return false;
         }
 
+        const humanRequest = this.firewater?.humanControl.request;
         const turnGeneration = this.firewater?.isRunning() ? this.firewater.generation : null;
         let used_command = false;
         if (max_responses === null) {
@@ -338,7 +339,7 @@ export class Agent {
         message = await handleEnglishTranslation(message);
         console.log('received message from', source, ':', message);
 
-        const checkInterrupt = () => (turnGeneration !== null && turnGeneration !== this.firewater.generation) ||
+        const checkInterrupt = () => !!humanRequest?.cancelled || (turnGeneration !== null && turnGeneration !== this.firewater.generation) ||
             this.self_prompter.shouldInterrupt(self_prompt) || this.shut_up || convoManager.responseScheduledFor(source);
         
         let behavior_log = this.bot.modes.flushBehaviorLog().trim();
@@ -372,7 +373,6 @@ export class Agent {
                     : await pending;
             } catch (error) {
                 await this.history.add('system', `Decision unavailable: ${error.message}`);
-                if (this.firewater?.humanControl.request) this.firewater.humanControl.hold();
                 break;
             } finally {
                 controller.abort();
@@ -420,6 +420,7 @@ export class Agent {
                 }
 
                 let execute_res = await executeCommand(this, res);
+                if (checkInterrupt()) break;
 
                 console.log('Agent executed:', command_name, 'and got:', execute_res);
                 if (command_name === '!traverseFirewater' && execute_res?.includes('Traversed ') && this.firewater?.loop?.plan?.phase === 'complete' &&
@@ -445,11 +446,10 @@ export class Agent {
             }
             
             await this.history.save();
-            if (this.firewater?.humanControl.resumeRequested || this.firewater?.loop?.waiting) break;
+            if (checkInterrupt() || this.firewater?.humanControl.turnDone || this.firewater?.humanControl.resumeRequested || this.firewater?.loop?.waiting) break;
             if (i === max_responses - 1 && this.firewater?.humanControl.request) {
-                // A multi-step human request hit its turn budget. Do not wander
-                // away before the player can clarify or continue the request.
-                this.firewater.humanControl.hold();
+                // Refresh the stage after the bounded human turn; holds have explicit state.
+                this.firewater.loop.needsObservation = true;
             }
         }
 

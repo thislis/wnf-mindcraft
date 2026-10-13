@@ -296,6 +296,26 @@ export class FirewaterSession {
         return this.planningReadyPromise;
     }
 
+    getRegroupCommand(now = Date.now()) {
+        if (!this.isRunning() || this.humanControl.request || this.humanControl.holding || this.loop.hold) return null;
+        const partner = this.getPartnerName();
+        if (this.conversationManager.isOtherAgent(partner)) return null;
+        const player = Object.values(this.agent.bot.players || {}).find(p => p.username?.toLowerCase() === partner.toLowerCase());
+        const position = player?.entity?.position;
+        const own = this.agent.bot.entity.position;
+        if (!position) return null;
+        const distance = own.distanceTo(position);
+        if (distance < 8 && !(distance > 3 && (this.loop.waiting || this.loop.stalledExplorations >= 2))) return null;
+        const previous = this.loop.regroupAttempt;
+        if (previous && (now - previous.at < 10_000 ||
+            (now - previous.at < 60_000 && position.distanceTo(previous.partner) < 3 && own.distanceTo(previous.own) < 3))) return null;
+        if (previous && position.distanceTo(previous.partner) >= 3)
+            this.loop.failures.delete(this.loop.targetKey('!goToPlayer', [partner, 2]));
+        this.loop.regroupAttempt = { at: now, partner: position.clone(), own: own.clone() };
+        this.loop.wake();
+        return `!goToPlayer(${JSON.stringify(partner)}, 2)`;
+    }
+
     async prepareDecision() {
         if (!this.isRunning() || !this.loop.needsObservation) return;
         const generation = this.generation;

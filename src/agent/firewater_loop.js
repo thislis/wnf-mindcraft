@@ -14,6 +14,7 @@ export class FirewaterLoop {
         this.targets = new Map();
         this.completedRoutes = new Set();
         this.plan = null;
+        this.regroupAttempt = null;
         this.revision = 0;
         this.observation = null;
         this.inspection = null;
@@ -101,8 +102,8 @@ export class FirewaterLoop {
         // Preserve action evidence across redundant sensing commands.
         if (!['!observeFirewater', '!inspectFirewater'].includes(command))
             this.lastResult = `${command}: ${String(result).slice(-450)}`;
-        const targeted = ['!traverseFirewater', '!collectGemAt', '!activateBlockAt', '!standOnBlock'].includes(command);
-        if (targeted && /passage (?:planning failed|path not found|movement failed|arrival unconfirmed|geometry changed)|no safe route|could not reach|outside the gem|did not confirm|no path|pathfinding|timed out|Code threw exception/i.test(result) && position) {
+        const targeted = ['!traverseFirewater', '!collectGemAt', '!activateBlockAt', '!standOnBlock', '!goToPlayer'].includes(command);
+        if (targeted && /ladder (?:movement failed|ascent|traversal failed)|navigation stalled|passage (?:planning failed|path not found|movement failed|arrival unconfirmed|geometry changed)|Movement to .* failed|no safe route|could not reach|outside the gem|did not confirm|no path|pathfinding|timed out|Code threw exception/i.test(result) && position) {
             this.failures.set(this.targetKey(command, args), { ...position });
             if (this.failures.size > 32) this.failures.delete(this.failures.keys().next().value);
         }

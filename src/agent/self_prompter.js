@@ -69,6 +69,16 @@ export class SelfPrompter {
                 const session = this.agent.firewater;
                 const managed = session?.isRunning();
                 if (managed && (session.humanControl?.request || session.humanControl?.holding)) break;
+                const regroup = managed ? session.getRegroupCommand?.() : null;
+                if (regroup) {
+                    const { executeCommand } = await import('./commands/index.js');
+                    const result = await executeCommand(this.agent, regroup);
+                    await this.agent.history.add('system', `Regroup with the human, then reassess the stage: ${result}`);
+                    if (session.loop) session.loop.needsObservation = true;
+                    continue;
+                }
+                if (managed && !session.loop?.hold && !session.loop?.waiting && session.loop?.observation &&
+                    Date.now() - session.loop.observation.at > 5000) session.loop.needsObservation = true;
                 if (managed && (session.loop?.hold || session.loop?.waiting) && !session.loop.needsObservation) {
                     await this._waitForManagedRetry();
                     continue;

@@ -257,7 +257,10 @@ export async function executeCommand(agent, message) {
             const generation = agent.firewater?.generation;
             const directedMovement = isHumanAction(agent) && ['!goToPlayer', '!goToCoordinates', '!traverseFirewater',
                 '!standOnBlock', '!collectGemAt', '!activateBlockAt', '!exploreFirewater'].includes(parsed.commandName);
-            if (directedMovement && loop) loop.hold = null;
+            if (directedMovement && loop) {
+                loop.hold = null;
+                agent.firewater.humanControl.holding = !!agent.firewater.humanControl.request?.holdRequested;
+            }
             const blocker = directedMovement ? null : loop?.beforeCommand(parsed.commandName, parsed.args, agent.bot.entity.position);
             if (blocker) { loop.recordBlocked(blocker); return blocker; }
             const result = await command.perform(agent, ...parsed.args);

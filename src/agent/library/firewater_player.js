@@ -5,7 +5,6 @@ import pf from 'mineflayer-pathfinder';
 /** Approach a loaded player by a bounded path, without using the cheat helper. */
 export async function approachFirewaterPlayer(agent, name, distance, navigate) {
     const session = agent.firewater;
-    if (session.humanControl.request) session.humanControl.hold();
     const directed = isHumanAction(agent);
     const bounds = session.session?.bounds;
     if (!session.isRunning() || (!directed && !bounds))
@@ -21,10 +20,10 @@ export async function approachFirewaterPlayer(agent, name, distance, navigate) {
     const generation = session.generation;
     const range = Math.max(1, Math.min(3, Number.isFinite(distance) ? distance : 2));
     try {
-        const ladder = directed && position.y > agent.bot.entity.position.y + 1.5 ? botHasNearbyLadder(agent.bot) : null;
+        const ladder = position.y > agent.bot.entity.position.y + 1.5 ? botHasNearbyLadder(agent.bot) : null;
         if (ladder) {
             const result = await climbHumanRoute(agent, { name: ladder.name, position: ladder.position }, navigate);
-            if (!result.startsWith('Climbed ')) return result;
+            if (!result.startsWith('Traversed ladder')) return result;
         }
         if (agent.bot.interrupt_code || !session.isRunning() || generation !== session.generation)
             return 'Player approach interrupted.';
@@ -38,8 +37,7 @@ export async function approachFirewaterPlayer(agent, name, distance, navigate) {
     const currentPlayer = player.entity?.position;
     if (!currentPlayer || agent.bot.entity.position.distanceTo(currentPlayer) > range + 1)
         return `${name} moved or is still too far away. Recheck their position before claiming arrival.`;
-    if (session.humanControl.request) session.humanControl.hold();
-    return `Reached ${name}. Stay here for their next instruction; if they requested a plate, observe now and use its allowed coordinates.`;
+    return `Reached ${name}. Re-observe together and continue the stage goal unless explicitly asked to wait.`;
 }
 
 function botHasNearbyLadder(bot) {

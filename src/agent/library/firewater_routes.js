@@ -46,7 +46,7 @@ export function routeLandings(bot, target, profile, { upward } = {}) {
 export async function traverseObservedRoute(agent, target, navigate) {
     const { bot, firewater } = agent;
     if (target.routeType === 'opening') return traversePassage(agent, target, navigate);
-    if (isHumanAction(agent) && ['ladder', 'vine'].includes(target.name))
+    if (['ladder', 'vine'].includes(target.name))
         return climbHumanRoute(agent, target, navigate);
     const generation = firewater.generation;
     const active = () => !bot.interrupt_code && firewater.isRunning() && generation === firewater.generation;
@@ -154,56 +154,124 @@ async function traversePassage(agent, target, navigate) {
     return fail('path not found', lastFailure);
 }
 
-/** Human-directed ascent uses the ladder controls, without requiring an upper floor first. */
+/** Shared ladder controller. Pathfinder approaches; manual controls own attach/climb/exit. */
 export async function climbHumanRoute(agent, target, navigate) {
     const { bot, firewater } = agent;
     const generation = firewater.generation;
-    const active = () => isHumanAction(agent) && !bot.interrupt_code && firewater.isRunning() && firewater.generation === generation;
+    const request = firewater.humanControl?.request;
+    const directed = isHumanAction(agent);
+    const active = () => !request?.cancelled && !bot.interrupt_code && firewater.isRunning() && firewater.generation === generation;
     let bottom = new Vec3(target.position.x, target.position.y, target.position.z);
     let top = bottom.clone();
     for (let n = 0; n < 128 && climbable.has(bot.blockAt(bottom.offset(0, -1, 0))?.name); n++) bottom = bottom.offset(0, -1, 0);
     for (let n = 0; n < 128 && climbable.has(bot.blockAt(top.offset(0, 1, 0))?.name); n++) top = top.offset(0, 1, 0);
     if (!active() || !climbable.has(bot.blockAt(bottom)?.name)) return 'Ladder traversal interrupted or ladder missing.';
-    const anchor = bottom.offset(0.5, 0, 0.5);
-    firewater.loop.plan = { target: key(target.position), phase: 'climb', completeWhen: 'reach the ladder top' };
-    try {
-        if (Math.hypot(bot.entity.position.x - anchor.x, bot.entity.position.z - anchor.z) > 0.8 || bot.entity.position.y < bottom.y - 0.5)
-            await navigate(bot, new pf.goals.GoalBlock(bottom.x, bottom.y, bottom.z));
-        if (!active()) return 'Ladder traversal interrupted.';
-        const block = bot.blockAt(bottom);
-        const facing = block?.getProperties?.()?.facing;
-        const supports = { north: [0, 1], south: [0, -1], east: [-1, 0], west: [1, 0] };
-        const direction = supports[facing] || [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([x, z]) =>
-            bot.blockAt(bottom.offset(x, 0, z))?.boundingBox === 'block');
-        if (!direction) return 'Could not locate the ladder attachment; specify the climbing face.';
-        await bot.lookAt(bottom.offset(0.5 + direction[0], 1, 0.5 + direction[1]), true);
-        let bestY = bot.entity.position.y;
-        let stalled = 0;
-        for (let tick = 0; tick < 600; tick++) {
-            if (!active() || !climbable.has(bot.blockAt(top)?.name)) return 'Ladder traversal interrupted or ladder changed.';
-            if (bot.entity.position.y >= top.y + 0.2) {
-                bot.clearControlStates();
-                const landing = routeLandings(bot, target, agent.prompter.profile, { upward: true })
-                    .find(p => p.y >= top.y);
-                if (landing) await navigate(bot, new pf.goals.GoalBlock(landing.x, landing.y, landing.z));
-                if (!active()) return 'Ladder traversal interrupted.';
-                if (bot.entity.position.y < top.y) return 'The bot slipped below the ladder top; ascent is incomplete.';
-                firewater.loop.plan.phase = 'climbed';
-                if (firewater.humanControl.request) firewater.humanControl.hold();
-                return `Climbed the requested ladder to y=${bot.entity.position.y.toFixed(2)}. Check the next movement from here.`;
-            }
-            bot.setControlState('sneak', false);
-            bot.setControlState('forward', true);
-            bot.setControlState('jump', true);
-            await bot.waitForTicks(1);
-            if (bot.entity.position.y > bestY + 0.05) { bestY = bot.entity.position.y; stalled = 0; }
-            else if (++stalled >= 60) return 'Ladder ascent made no vertical progress for 3 seconds; a collision or attachment is blocking movement.';
+    const profile = agent.prompter.profile;
+    if (bot.entity.position.y >= top.y + 0.5 && target.position.y < bot.entity.position.y - 1) {
+        const lowerFloor = routeLandings(bot, target, profile, { upward: false })[0];
+        firewater.loop.plan = { target: key(target.position), phase: 'descend ladder', completeWhen: 'reach the lower floor' };
+        if (!lowerFloor) { firewater.loop.plan.phase = 'blocked'; return 'Ladder traversal failed: no loaded lower floor.'; }
+        try {
+            await navigate(bot, new pf.goals.GoalBlock(lowerFloor.x, lowerFloor.y, lowerFloor.z));
+            if (!active()) return 'Ladder traversal interrupted.';
+            if (!bot.entity.position.floored().equals(lowerFloor) || !safeLanding(bot, lowerFloor, profile))
+                return 'Ladder traversal failed: lower floor arrival unconfirmed.';
+            firewater.loop.plan.phase = 'complete';
+            firewater.loop.wake();
+            return `Traversed ladder downward; verified lower floor (${key(lowerFloor)}). Re-observe.`;
+        } catch (error) { return `Ladder movement failed: ${error.message}.`; }
+        finally {
+            bot.clearControlStates();
+            if (generation === firewater.generation && firewater.loop.plan?.phase !== 'complete') firewater.loop.plan.phase = 'blocked';
         }
-        return 'Ladder ascent exceeded 30 seconds without reaching the top.';
+    }
+    const hazards = new Set([...(profile.firewater_active_poison_materials || ['lime_carpet', 'green_concrete', 'green_stained_glass']),
+        profile.firewater_role === 'wade' ? 'lava' : 'water', 'bubble_column']);
+    const allowedPosition = p => directed || (inside(p, profile.firewater_active_bounds) &&
+        [p, p.offset(0, 1, 0), p.offset(0, -1, 0)].every(q => {
+            const block = bot.blockAt(q); return block && !hazards.has(block.name);
+        }));
+    const anchor = bottom.offset(0.5, 0, 0.5);
+    const landing = routeLandings(bot, target, profile, { upward: true })[0];
+    const phase = value => {
+        firewater.loop.plan.phase = value;
+        console.log(`[ladder] ${JSON.stringify({ agent: agent.name, phase: value, position: bot.entity.position, bottom, top })}`);
+    };
+    firewater.loop.plan = { target: key(target.position), phase: 'approach ladder', completeWhen: 'stand on the upper floor after leaving the ladder' };
+    if (!directed && !landing) {
+        firewater.loop.plan.phase = 'blocked';
+        return 'Ladder traversal failed: no loaded allowed upper floor. Observe the top from another position.';
+    }
+    try {
+        // Stop beside the ladder, not at its exact centre: collision can make that goal unreachable.
+        if (Math.hypot(bot.entity.position.x - anchor.x, bot.entity.position.z - anchor.z) > 1.6 || bot.entity.position.y < bottom.y - 0.5)
+            await navigate(bot, new pf.goals.GoalNear(bottom.x, bottom.y, bottom.z, 1));
+        if (!active()) return 'Ladder traversal interrupted.';
+        bot.pathfinder.setGoal?.(null);
+        bot.clearControlStates();
+        const block = bot.blockAt(bottom);
+        const supports = { north: [0, 1], south: [0, -1], east: [-1, 0], west: [1, 0] };
+        const direction = supports[block?.getProperties?.()?.facing] || [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([x, z]) =>
+            bot.blockAt(bottom.offset(x, 0, z))?.boundingBox === 'block');
+        if (!direction) return 'Ladder traversal failed: attachment face is unavailable.';
+        let bestY = bot.entity.position.y, bestDistance = Infinity, stalled = 0, stable = 0, realignments = 0;
+        const deadline = Date.now() + 20_000;
+        phase('attach ladder');
+        for (let tick = 0; tick < 400 && Date.now() < deadline; tick++) {
+            if (!active() || !climbable.has(bot.blockAt(top)?.name)) return 'Ladder traversal interrupted or ladder changed.';
+            const pos = bot.entity.position;
+            const onColumn = pos.floored().x === bottom.x && pos.floored().z === bottom.z;
+            const exiting = !!landing && pos.y >= top.y - 0.1;
+            const aim = exiting ? landing.offset(0.5, 0, 0.5) : onColumn
+                ? anchor.offset(direction[0], 0, direction[1]) : anchor;
+            const nextPhase = exiting ? 'exit ladder' : onColumn ? 'climb ladder' : 'attach ladder';
+            if (firewater.loop.plan.phase !== nextPhase) phase(nextPhase);
+            if (landing && pos.floored().equals(landing) && bot.entity.onGround && safeLanding(bot, landing, profile)) {
+                bot.clearControlStates();
+                if (++stable >= 3) {
+                    firewater.loop.completedRoutes.add(`${bottom.x},${bottom.z}`);
+                    firewater.loop.plan.phase = 'complete';
+                    firewater.loop.stalledExplorations = 0;
+                    firewater.loop.wake();
+                    return `Traversed ladder; verified upper floor (${key(landing)}). Re-observe and continue the stage goal.`;
+                }
+            } else {
+                stable = 0;
+                const dx = aim.x - pos.x, dz = aim.z - pos.z;
+                const distance = Math.hypot(dx, dz) || 1;
+                const step = pos.offset(dx / distance * 0.4, 0, dz / distance * 0.4).floored();
+                if (!allowedPosition(step)) return 'Ladder traversal failed: the next physical step is outside the allowed route.';
+                if (bot.look) await bot.look(Math.atan2(-dx, -dz), 0, true);
+                else await bot.lookAt(new Vec3(aim.x, pos.y + 1.62, aim.z), true);
+                bot.setControlState('sneak', false);
+                bot.setControlState('sprint', false);
+                bot.setControlState('forward', true);
+                bot.setControlState('jump', true);
+            }
+            await bot.waitForTicks(1);
+            const distance = Math.hypot(bot.entity.position.x - aim.x, bot.entity.position.z - aim.z);
+            if (bot.entity.position.y > bestY + 0.05 || (!onColumn && distance < bestDistance - 0.05)) {
+                bestY = Math.max(bestY, bot.entity.position.y); bestDistance = distance; stalled = 0;
+            } else stalled++;
+            if (!landing && bot.entity.position.y >= top.y + 0.2)
+                return 'Ladder traversal failed: reached the top but no loaded exit floor is known; ascent is not a completed crossing.';
+            if (stalled >= 40) {
+                if (realignments++ >= 1) return 'Ladder traversal failed: no progress after realignment. Re-observe the attachment or upper obstruction.';
+                phase('realign ladder');
+                bot.clearControlStates();
+                // A short lateral adjustment frees a corner without releasing into a backward drop.
+                bot.setControlState(direction[0] + direction[1] > 0 ? 'left' : 'right', true);
+                bot.setControlState('jump', true);
+                await bot.waitForTicks(4);
+                bot.clearControlStates();
+                stalled = 0; bestDistance = Infinity;
+            }
+        }
+        return 'Ladder traversal failed: exceeded the 20 second traversal limit.';
     } catch (error) {
-        return `Ladder movement failed: ${error.message}.`;
+        return active() ? `Ladder movement failed: ${error.message}.` : 'Ladder traversal interrupted.';
     } finally {
         bot.clearControlStates();
-        if (generation === firewater.generation && firewater.loop.plan?.phase === 'climb') firewater.loop.plan.phase = 'blocked';
+        if (generation === firewater.generation && firewater.loop.plan?.phase !== 'complete') firewater.loop.plan.phase = 'blocked';
     }
 }

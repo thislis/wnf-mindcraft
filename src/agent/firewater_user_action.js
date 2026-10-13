@@ -11,6 +11,6 @@ export function runHumanAction(agent, action) {
 export function isHumanAction(agentOrBot) {
     const context = userAction.getStore();
     return !!context && (context.agent === agentOrBot || context.agent.bot === agentOrBot) &&
-        !!context.request && context.agent.firewater.humanControl.request === context.request &&
+        !!context.request && !context.request.cancelled && context.agent.firewater.humanControl.request === context.request &&
         context.agent.firewater.generation === context.generation && context.agent.firewater.isRunning();
 }

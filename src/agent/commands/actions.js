@@ -39,12 +39,13 @@ export function validateObservedCoordinateTarget(agent, x, y, z, action, options
         const context = agent.firewater.getObservationContext();
         const gem = context.gems?.find(g => g.position.x === x && g.position.y === y && g.position.z === z);
         if (action === 'collect' && !gem) return { error: 'No registered gem exists at this coordinate.' };
+        if (action === 'collect' && block.name !== gem.name) return { error: 'The registered gem is no longer present. Re-observe and continue with remaining gems or the exit.' };
         if (action === 'activate' && block.name !== 'lever' && !block.name.endsWith('_button'))
             return { error: `${block.name} cannot be activated as a lever or button.` };
         if (action === 'traverse' && !['ladder', 'vine', 'scaffolding', 'air', 'cave_air'].includes(block.name))
             return { error: `${block.name} is not a ladder or passage.` };
         const target = { ...gem, name: block.name, position: { x, y, z },
-            kind: action === 'collect' ? 'gem' : action === 'traverse' ? 'route' : action === 'activate' ? 'activator' : 'pressure_plate',
+            kind: action === 'collect' ? 'gem' : action === 'traverse' ? 'route' : action === 'activate' ? 'activator' : block.name.endsWith('_pressure_plate') ? 'pressure_plate' : 'exit',
             ...(['air', 'cave_air'].includes(block.name) ? { routeType: 'opening' } : {}) };
         return { target, block };
     }
@@ -159,10 +160,13 @@ export const actionsList = [
         description: 'Pause autonomous Firewater play and hold position until the human gives another instruction.',
         perform: async function(agent) {
             if (!agent.firewater?.isRunning()) return 'No Firewater stage is active.';
-            agent.firewater.humanControl.hold();
+            const control = agent.firewater.humanControl;
+            control.turnDone = true;
+            if (control.request?.holdRequested || agent.firewater.loop.hold) control.hold();
+            else if (!control.request) agent.firewater.loop.waiting = true;
             await agent.actions.stop();
             agent.actions.cancelResume();
-            return 'Holding position. Autonomous play is paused until the human asks to resume.';
+            return control.holding || agent.firewater.loop.hold ? 'Holding the requested position.' : 'Finished this request. Re-observe and continue the stage goal.';
         }
     },
     {
@@ -673,7 +677,6 @@ export const actionsList = [
             'z': { type: 'int', description: 'Observed block z coordinate.' }
         },
         perform: runAsAction(async (agent, x, y, z) => {
-            if (agent.firewater?.humanControl?.request) agent.firewater.humanControl.hold();
             const authorized = validateObservedCoordinateTarget(agent, x, y, z, 'stand');
             if (authorized.error) {
                 skills.log(agent.bot, authorized.error);
