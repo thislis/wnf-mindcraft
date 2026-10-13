@@ -1,3 +1,4 @@
+import { isHumanAction } from '../firewater_user_action.js';
 import { getBlockId, getItemId } from "../../utils/mcdata.js";
 import { actionsList } from './actions.js';
 import { queryList } from './queries.js';
@@ -31,7 +32,8 @@ export const FIREWATER_COMMAND_ALLOWLIST = new Set([
 ]);
 
 export function isFirewaterCommandAllowed(agent, commandName) {
-    return !agent.firewater?.isRunning() || FIREWATER_COMMAND_ALLOWLIST.has(commandName);
+    return !agent.firewater?.isRunning() || FIREWATER_COMMAND_ALLOWLIST.has(commandName) ||
+        (isHumanAction(agent) && commandName === '!goToCoordinates');
 }
 
 export function getCommand(name) {
@@ -253,7 +255,13 @@ export async function executeCommand(agent, message) {
         else {
             const loop = agent.firewater?.isRunning() ? agent.firewater.loop : null;
             const generation = agent.firewater?.generation;
-            const blocker = loop?.beforeCommand(parsed.commandName, parsed.args, agent.bot.entity.position);
+            const directedMovement = isHumanAction(agent) && ['!goToPlayer', '!goToCoordinates', '!traverseFirewater',
+                '!standOnBlock', '!collectGemAt', '!activateBlockAt', '!exploreFirewater'].includes(parsed.commandName);
+            if (directedMovement && loop) {
+                loop.hold = null;
+                agent.firewater.humanControl.holding = !!agent.firewater.humanControl.request?.holdRequested;
+            }
+            const blocker = directedMovement ? null : loop?.beforeCommand(parsed.commandName, parsed.args, agent.bot.entity.position);
             if (blocker) { loop.recordBlocked(blocker); return blocker; }
             const result = await command.perform(agent, ...parsed.args);
             if (generation === agent.firewater?.generation)

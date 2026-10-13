@@ -253,12 +253,16 @@ export class Prompter {
         this.last_prompt_time = Date.now();
     }
 
-    async promptConvo(messages) {
+    async promptConvo(messages, { signal } = {}) {
+        const managed = this.agent.firewater?.isRunning();
         this.most_recent_msg_time = Date.now();
         let current_msg_time = this.most_recent_msg_time;
 
-        for (let i = 0; i < 3; i++) { // try 3 times to avoid hallucinations
+        for (let i = 0; i < (managed ? 1 : 3); i++) {
+            signal?.throwIfAborted();
+            const preparationStarted = performance.now();
             await this.checkCooldown();
+            signal?.throwIfAborted();
             if (current_msg_time !== this.most_recent_msg_time) {
                 return '';
             }
@@ -271,7 +275,12 @@ export class Prompter {
             let generation;
 
             try {
-                generation = await this.chat_model.sendRequest(messages, prompt);
+                signal?.throwIfAborted();
+                console.log('[decision-preparation]', JSON.stringify({ agent: this.agent.name,
+                    total_ms: Math.round(performance.now() - preparationStarted), prompt_chars: prompt.length,
+                    history_chars: JSON.stringify(messages).length }));
+                generation = await this.chat_model.sendRequest(messages, prompt, '***', { signal });
+                signal?.throwIfAborted();
                 if (typeof generation !== 'string') {
                     console.error('Error: Generated response is not a string', generation);
                     throw new Error('Generated response is not a string');
@@ -280,6 +289,7 @@ export class Prompter {
                 await this._saveLog(prompt, messages, generation, 'conversation');
 
             } catch (error) {
+                if (managed || signal?.aborted) throw error;
                 console.error('Error during message generation or file writing:', error);
                 continue;
             }
@@ -345,11 +355,14 @@ export class Prompter {
         return res.trim().toLowerCase() === 'respond';
     }
 
-    async promptVision(messages, imageBuffer) {
+    async promptVision(messages, imageBuffer, { signal } = {}) {
+        signal?.throwIfAborted();
         await this.checkCooldown();
+        signal?.throwIfAborted();
         let prompt = this.profile.image_analysis;
         prompt = await this.replaceStrings(prompt, messages, null, null, null);
-        return await this.vision_model.sendVisionRequest(messages, prompt, imageBuffer);
+        signal?.throwIfAborted();
+        return await this.vision_model.sendVisionRequest(messages, prompt, imageBuffer, { signal });
     }
 
     async promptGoalSetting(messages, last_goals) {

@@ -1,3 +1,4 @@
+import { isHumanAction } from '../firewater_user_action.js';
 import pf from 'mineflayer-pathfinder';
 import agentSettings from '../settings.js';
 
@@ -96,6 +97,14 @@ export function createRoleAwareMovements(bot, profile=agentSettings.profile) {
     // blocks. The exclusion is a second guard for future pathfinder changes.
     movements.scafoldingBlocks = [];
     movements.exclusionAreasPlace.push(() => IMPASSABLE_COST);
+
+    if (isHumanAction(bot)) {
+        movements.blocksToAvoid.clear();
+        movements.allowParkour = true;
+        movements.maxDropDown = 256;
+        movements.infiniteLiquidDropdownDistance = true;
+        return movements;
+    }
 
     const configuredPoison = Array.isArray(profile.firewater_active_poison_materials)
         ? profile.firewater_active_poison_materials

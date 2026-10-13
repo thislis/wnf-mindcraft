@@ -1,3 +1,4 @@
+import { passageFoot } from '../library/firewater_passages.js';
 import { Vec3 } from 'vec3';
 import fs from 'fs';
 import { waitForFirewaterResponse } from '../firewater_loop.js';
@@ -153,7 +154,7 @@ export class VisionInterpreter {
             const key = positionKey(target.position);
             const previous = this.knownTargets.get(key);
             if (!previous && target.kind !== 'hazard') changes.push(`new ${target.kind} at (${key})`);
-            else if (previous.name !== target.name || previous.powered !== target.powered)
+            else if (previous && (previous.name !== target.name || previous.powered !== target.powered))
                 changes.push(`changed ${target.name} at (${key}); powered=${target.powered}`);
             this.knownTargets.set(key, target);
             this.observedTargets.set(key, { ...target, observedAt: this.now() });
@@ -215,6 +216,7 @@ export class VisionInterpreter {
         return this.agent.prompter.promptVision(
             [{ role: 'system', content: metadata + `\nView order: front, right, back, left${focus ? ', focused route top/landing' : ''}.` }],
             filenames.map(filename => this.readImage(filename)),
+            { signal },
         );
     }
 
@@ -305,7 +307,8 @@ export class VisionInterpreter {
             count: category === 'targets' ? 512 : 64,
             useExtraInfo: true,
         });
-        const openings = this.agent.firewater?.exploration?.openings || [];
+        const openings = (this.agent.firewater?.exploration?.openings || [])
+            .map(p => passageFoot(bot, p, context.bounds)).filter(Boolean);
         const positions = [...find('targets'), ...find('safe'), ...find('hazards'),
             ...openings.map(p => new Vec3(p.x, p.y, p.z)).filter(p => bot.entity.position.distanceTo(p) <= FIREWATER_LINE_OF_SIGHT_DISTANCE)];
         const unique = new Map();

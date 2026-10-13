@@ -1048,3 +1048,19 @@ test('gem removal and fluid updates do not invent opened passages, and closed wa
     session.handleExplorationBlockUpdate(air, solid);
     assert.equal(session.exploration.openings.length, 0);
 });
+
+test('opening events keep the lowest marker per column regardless of update order', () => {
+    for (const heights of [[67, 66, 65, 64], [64, 65, 66, 67]]) {
+        const session = new FirewaterSession(makeAgent(), { planningDelayMs: -1 });
+        session.lifecycle = 'running';
+        session.session = { bounds: { min: { x: 0, y: 60, z: 0 }, max: { x: 40, y: 72, z: 40 } } };
+        for (const z of [10, 11]) for (const y of heights) session.handleExplorationBlockUpdate(
+            { type: 1, stateId: 1, boundingBox: 'block' },
+            { type: 0, stateId: 0, name: 'air', boundingBox: 'empty', position: new Vec3(13, y, z) });
+        assert.deepEqual(session.exploration.openings, [{ x: 13, y: 64, z: 10 }, { x: 13, y: 64, z: 11 }]);
+        session.handleExplorationBlockUpdate(
+            { type: 0, stateId: 0, name: 'air', boundingBox: 'empty' },
+            { type: 1, stateId: 1, name: 'stone', boundingBox: 'block', position: new Vec3(13, 65, 10) });
+        assert.deepEqual(session.exploration.openings, [{ x: 13, y: 64, z: 11 }]);
+    }
+});

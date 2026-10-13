@@ -1,3 +1,4 @@
+import { isHumanAction } from '../firewater_user_action.js';
 import * as mc from "../../utils/mcdata.js";
 import * as world from "./world.js";
 import pf from 'mineflayer-pathfinder';
@@ -1099,9 +1100,9 @@ export async function goToGoal(bot, goal) {
     if (firewaterRole) {
         const path = await bot.pathfinder.getPathTo(final_movements, goal, pathfind_timeout);
         if (path.status === 'success') {
-            log(bot, `Found ${firewaterRole}-safe Firewater path.`);
+            log(bot, isHumanAction(bot) ? 'Following the human-requested route.' : `Found ${firewaterRole}-safe Firewater path.`);
         } else {
-            log(bot, `No complete ${firewaterRole}-safe path found; attempting safe navigation.`);
+            log(bot, isHumanAction(bot) ? 'Attempting the human-requested route.' : `No complete ${firewaterRole}-safe path found; attempting safe navigation.`);
         }
     }
     else if (await bot.pathfinder.getPathTo(nonDestructiveMovements, goal, pathfind_timeout).status === 'success') {
@@ -1121,14 +1122,31 @@ export async function goToGoal(bot, goal) {
     const doorCheckInterval = firewaterRole ? null : startDoorInterval(bot);
 
     bot.pathfinder.setMovements(final_movements);
+    let navigationFailure;
+    let progressPosition = bot.entity.position.clone();
+    let lastProgress = Date.now();
+    const started = lastProgress;
+    const navigationWatch = firewaterRole ? setInterval(() => {
+        if (bot.entity.position.distanceTo(progressPosition) > 0.25) {
+            progressPosition = bot.entity.position.clone();
+            lastProgress = Date.now();
+        }
+        if (bot.interrupt_code || Date.now() - lastProgress > 4000 || Date.now() - started > 25000) {
+            navigationFailure = new Error(bot.interrupt_code ? 'Navigation interrupted' : 'Navigation stalled or exceeded 25 seconds');
+            bot.pathfinder.setGoal(null);
+            bot.clearControlStates();
+        }
+    }, 200) : null;
     try {
         await bot.pathfinder.goto(goal);
+        if (navigationFailure) throw navigationFailure;
         clearInterval(doorCheckInterval);
         return true;
     } catch (err) {
         clearInterval(doorCheckInterval);
-        // we need to catch so we can clean up the door check interval, then rethrow the error
-        throw err;
+        throw navigationFailure || err;
+    } finally {
+        clearInterval(navigationWatch);
     }
 }
 

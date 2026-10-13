@@ -1,7 +1,13 @@
+import { isHumanAction } from './firewater_user_action.js';
+import { createRoleAwareMovements } from './library/firewater_movements.js';
+import minecraftData from 'minecraft-data';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Vec3 } from 'vec3';
 import { Agent } from './agent.js';
+import { validateObservedCoordinateTarget } from './commands/actions.js';
+import { executeCommand, getCommand, isFirewaterCommandAllowed } from './commands/index.js';
+
 import { Prompter } from '../models/prompter.js';
 import { FirewaterHumanControl } from './firewater_human_control.js';
 import { approachFirewaterPlayer } from './library/firewater_player.js';
@@ -65,6 +71,7 @@ test('multiple human messages are handled in order without overlapping actions',
         control.hold();
         order.push('first done');
     });
+    await new Promise(resolve => setTimeout(resolve, 0));
     const second = control.run('AL_Gamja', 'stand on this plate', async () => {
         order.push('second');
         assert.match(control.getPrompt(), /stand on this plate/);
@@ -77,13 +84,13 @@ test('multiple human messages are handled in order without overlapping actions',
     assert.deepEqual(order, ['first', 'first done', 'second']);
 });
 
-test('failed human turns stay paused and later requests still work', async () => {
+test('failed ordinary tasks return to the stage and later requests still work', async () => {
     const { control, prompter } = fixture();
     await assert.rejects(control.run('AL_Gamja', 'come here', async () => {
         await Promise.resolve();
         throw new Error('navigation failed');
     }), /navigation failed/);
-    assert.equal(prompter.active, false);
+    assert.equal(prompter.active, true);
     assert.equal(control.request, null);
     await control.run('AL_Gamja', 'resume', async () => {
         control.resume();
@@ -104,7 +111,7 @@ test('stage reset or clear prevents an old human request from restarting play', 
     }
 });
 
-test('player approach uses the loaded sender position and holds only after verified arrival', async () => {
+test('player approach uses the loaded sender position then resumes the stage', async () => {
     const { agent, control, prompter, player } = fixture();
     await control.run('AL_Gamja', '여기로 와', async () => {
         const result = await approachFirewaterPlayer(agent, 'al_gamja', 100, async (bot, goal) => {
@@ -115,7 +122,7 @@ test('player approach uses the loaded sender position and holds only after verif
         });
         assert.match(result, /Reached al_gamja/);
     });
-    assert.equal(prompter.active, false);
+    assert.equal(prompter.active, true);
 });
 
 test('unloaded and out-of-bounds players never trigger navigation', async () => {
@@ -216,6 +223,124 @@ test('a question does not cancel a cooperative plate hold', async () => {
     agent.firewater.loop.hold = 'west plate';
     await control.run('Human', 'where is the exit?', async () => {
         assert.equal(agent.firewater.loop.hold, 'west plate');
+        await Promise.resolve();
+    });
+});
+
+test('human risk override is scoped to the active request, bot and generation', async () => {
+    const { agent, control, session } = fixture();
+    agent.bot.registry = minecraftData('1.21.6');
+    agent.bot.inventory = { items: () => [] };
+    const profile = { firewater_role: 'wade', firewater_active_bounds: session.session.bounds };
+    assert.equal(isHumanAction(agent.bot), false);
+    await control.run('Human', '나한테 와', async () => {
+        assert.equal(isHumanAction(agent), true);
+        assert.equal(isHumanAction(agent.bot), true);
+        assert.equal(isHumanAction({}), false);
+        const movements = createRoleAwareMovements(agent.bot, profile);
+        assert.equal(movements.blocksToAvoid.size, 0);
+        assert.equal(movements.exclusionAreasStep.length, 0);
+        assert.equal(movements.allowParkour, true);
+        assert.equal(movements.canDig, false, 'movement must not silently excavate puzzle blocks');
+        session.generation++;
+        assert.equal(isHumanAction(agent), false);
+        await Promise.resolve();
+    });
+    assert.equal(isHumanAction(agent), false);
+    assert.equal(createRoleAwareMovements(agent.bot, profile).blocksToAvoid.has(agent.bot.registry.blocksByName.lava.id), true);
+});
+
+test('human requests cross stage bounds and bypass stale coordinate and role safety guards', async () => {
+    const { agent, control, session, player } = fixture();
+    player.entity.position.x = 100;
+    agent.bot.blockAt = position => ({ name: 'lava', position });
+    session.getObservationContext = () => ({});
+    session.validateObservedTarget = () => 'blocked by autonomous safety';
+    await control.run('Human', 'go to me outside the puzzle', async () => {
+        assert.equal(isFirewaterCommandAllowed(agent, '!goToCoordinates'), true);
+        assert.equal(validateObservedCoordinateTarget(agent, 100, 64, 10, 'stand').error, undefined);
+        const result = await approachFirewaterPlayer(agent, 'AL_Gamja', 2, bot => {
+            bot.entity.position = player.entity.position.clone();
+            return Promise.resolve();
+        });
+        assert.match(result, /Reached/);
+    });
+    assert.equal(isFirewaterCommandAllowed(agent, '!goToCoordinates'), false);
+    assert.match(validateObservedCoordinateTarget(agent, 100, 64, 10, 'stand').error, /autonomous safety/);
+});
+
+test('a Korean human movement request bypasses old hold and failure guards; questions keep holds', async t => {
+    const { agent, control, session } = fixture();
+    const { FirewaterLoop } = await import('./firewater_loop.js');
+    session.loop = new FirewaterLoop();
+    session.loop.hold = 'west plate';
+    session.loop.failures.set('!goToPlayer:AL_Gamja,2', { ...agent.bot.entity.position });
+    t.mock.method(getCommand('!goToPlayer'), 'perform', () => Promise.resolve('Moved as requested.'));
+    await control.run('Human', '나한테 와', async () => {
+        assert.equal(await executeCommand(agent, '!goToPlayer("AL_Gamja", 2)'), 'Moved as requested.');
+        assert.equal(session.loop.hold, null);
+    });
+    session.loop.hold = 'west plate';
+    await control.run('Human', 'where are you?', async () => {
+        assert.equal(session.loop.hold, 'west plate');
+        await Promise.resolve();
+    });
+});
+
+test('arrival followed by a new ordinary task clears old waiting and resumes the stage', async t => {
+    const { agent, control, session, prompter } = fixture();
+    const { FirewaterLoop } = await import('./firewater_loop.js');
+    session.loop = new FirewaterLoop();
+    control.hold();
+    t.mock.method(getCommand('!goToPlayer'), 'perform', () => Promise.resolve('Reached Human.'));
+    await control.run('Human', '나한테 와', () => executeCommand(agent, '!goToPlayer("Human", 2)'));
+    assert.equal(control.holding, false);
+    assert.equal(prompter.active, true);
+    assert.equal(session.loop.needsObservation, true);
+});
+
+test('latest instruction revokes the active action and skips obsolete queued instructions', async () => {
+    const { agent, control, prompter } = fixture();
+    let started, release;
+    const entered = new Promise(resolve => { started = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    let cancelled = 0;
+    agent.requestInterrupt = () => { cancelled++; release(); };
+    const order = [];
+    const first = control.run('Human', 'climb', async () => {
+        const request = control.request;
+        started(); await gate;
+        assert.equal(request.cancelled, true);
+        assert.equal(isHumanAction(agent), false, 'obsolete action loses human override');
+    });
+    await entered;
+    const obsolete = control.run('Human', 'come here', async () => { order.push('obsolete'); await Promise.resolve(); });
+    const latest = control.run('Human', 'wait here', async () => { order.push('latest'); await Promise.resolve(); });
+    await Promise.all([first, obsolete, latest]);
+    assert.deepEqual(order, ['latest']);
+    assert.ok(cancelled > 0);
+    assert.equal(control.holding, true);
+    assert.equal(prompter.active, false);
+});
+
+test('human exit uses the floor top while a pressure plate uses its own height', async () => {
+    const { agent, control, session } = fixture();
+    session.getObservationContext = () => ({ gems: [] });
+    await control.run('Human', 'stand on the exit', async () => {
+        agent.bot.blockAt = position => ({ name: 'light_blue_glazed_terracotta', position });
+        assert.equal(validateObservedCoordinateTarget(agent, 1672, -51, 13, 'stand').target.kind, 'exit');
+        agent.bot.blockAt = position => ({ name: 'stone_pressure_plate', position });
+        assert.equal(validateObservedCoordinateTarget(agent, 1672, -50, 13, 'stand').target.kind, 'pressure_plate');
+        await Promise.resolve();
+    });
+});
+
+test('an already removed registered gem is not reported as another collection', async () => {
+    const { agent, control, session } = fixture();
+    session.getObservationContext = () => ({ gems: [{ name: 'blue_stained_glass', position: { x: 1, y: 64, z: 1 } }] });
+    agent.bot.blockAt = position => ({ name: 'air', position });
+    await control.run('Human', 'get nearest gem', async () => {
+        assert.match(validateObservedCoordinateTarget(agent, 1, 64, 1, 'collect').error, /no longer present/);
         await Promise.resolve();
     });
 });

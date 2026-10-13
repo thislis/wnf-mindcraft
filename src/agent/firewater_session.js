@@ -296,10 +296,37 @@ export class FirewaterSession {
         return this.planningReadyPromise;
     }
 
+    getRegroupCommand(now = Date.now()) {
+        if (!this.isRunning() || this.humanControl.request || this.humanControl.holding || this.loop.hold) return null;
+        const partner = this.getPartnerName();
+        if (this.conversationManager.isOtherAgent(partner)) return null;
+        const player = Object.values(this.agent.bot.players || {}).find(p => p.username?.toLowerCase() === partner.toLowerCase());
+        const position = player?.entity?.position;
+        const own = this.agent.bot.entity.position;
+        if (!position) return null;
+        const distance = own.distanceTo(position);
+        if (distance < 8 && !(distance > 3 && (this.loop.waiting || this.loop.stalledExplorations >= 2))) return null;
+        const previous = this.loop.regroupAttempt;
+        if (previous && (now - previous.at < 10_000 ||
+            (now - previous.at < 60_000 && position.distanceTo(previous.partner) < 3 && own.distanceTo(previous.own) < 3))) return null;
+        if (previous && position.distanceTo(previous.partner) >= 3)
+            this.loop.failures.delete(this.loop.targetKey('!goToPlayer', [partner, 2]));
+        this.loop.regroupAttempt = { at: now, partner: position.clone(), own: own.clone() };
+        this.loop.wake();
+        return `!goToPlayer(${JSON.stringify(partner)}, 2)`;
+    }
+
     async prepareDecision() {
         if (!this.isRunning() || !this.loop.needsObservation) return;
         const generation = this.generation;
-        const observation = await this.agent.vision_interpreter.observeFirewater({ visual: false });
+        const started = performance.now();
+        let observation;
+        try {
+            observation = await this.agent.vision_interpreter.observeFirewater({ visual: false });
+        } finally {
+            console.log('[decision-observation]', JSON.stringify({ agent: this.agent.name,
+                total_ms: Math.round(performance.now() - started), generation }));
+        }
         if (generation !== this.generation || !this.isRunning()) return;
         this.recordExplorationObservation();
         await this.agent.history.add('system', observation);
@@ -409,13 +436,15 @@ export class FirewaterSession {
         this.exploration.failedTargets = [];
         this.loop.routeChanged();
         if (newBlock.boundingBox === 'block') this.exploration.openings = this.exploration.openings.filter(point =>
-            pointDistance(point, p) >= 3);
+            point.x !== p.x || point.z !== p.z);
         if (oldBlock.boundingBox === 'block' && newBlock.boundingBox === 'empty' &&
             ['air', 'cave_air'].includes(newBlock.name) && !removedGem) {
             const opening = { x: p.x, y: p.y, z: p.z };
-            if (!this.exploration.openings.some(point => pointDistance(point, opening) < 3)) {
+            const column = this.exploration.openings.find(point => point.x === p.x && point.z === p.z);
+            if (column) column.y = Math.min(column.y, p.y);
+            else {
                 this.exploration.openings.push(opening);
-                if (this.exploration.openings.length > 24) this.exploration.openings.shift();
+                if (this.exploration.openings.length > 64) this.exploration.openings.shift();
             }
         }
     }

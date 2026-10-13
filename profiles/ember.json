@@ -1,7 +1,29 @@
 {
     "name": "Ember",
-    "model": "openai-codex/gpt-6.1-sol",
-    "vision_model": "openai-codex/gpt-6.1-sol",
+    "model": {
+        "model": "openai-codex/gpt-6.1-sol",
+        "params": {
+            "reasoning": {
+                "effort": "low"
+            },
+            "text": {
+                "verbosity": "low"
+            },
+            "timeout_ms": 20000
+        }
+    },
+    "vision_model": {
+        "model": "openai-codex/gpt-6.1-sol",
+        "params": {
+            "reasoning": {
+                "effort": "low"
+            },
+            "text": {
+                "verbosity": "low"
+            },
+            "timeout_ms": 30000
+        }
+    },
     "firewater_role": "ember",
     "firewater_partner": "Wade",
     "firewater_conversation_message_limit": 4,
@@ -22,5 +44,7 @@
         "elbow_room": false,
         "idle_staring": false,
         "cheat": false
-    }
+    },
+    "cooldown": 0,
+    "firewater_action_cooldown_ms": 150
 }
