@@ -1,0 +1,29 @@
+Error getting server: TypeError: Cannot read properties of null (reading 'version')
+    at ping (/home/gamja/ist-tech/mindcraft-firewater/node_modules/minecraft-protocol/src/ping.js:26:26)
+    at Object.cbPing [as ping] (/home/gamja/ist-tech/mindcraft-firewater/node_modules/minecraft-protocol/src/ping.js:10:23)
+    at file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mcserver.js:21:12
+    at new Promise (<anonymous>)
+    at serverInfo (file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mcserver.js:13:12)
+    at getServer (file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mcserver.js:130:24)
+    at Module.createAgent (file:///home/gamja/ist-tech/mindcraft-firewater/src/mindcraft/mindcraft.js:48:34)
+    at file:///home/gamja/ist-tech/mindcraft-firewater/main.js:98:15
+Attempting to connect anyway...
+MindServer running on port 8080 on host localhost
+Timeout pinging server wnf.chogw.uk:25565
+Connecting to MindServer
+Client connected
+Wade connected to MindServer
+Starting agent
+Initializing agent Wade...
+Error with embedding model, using word-overlap instead.
+Error with embedding model, using word-overlap instead.
+Error with embedding model, using word-overlap instead.
+Examples initialized.
+Loaded memory: Firewater forest_gems attempt 1. Use CURRENT LOOP STATE/fresh observations; coordinate permissions last 30s, old targets only clues. Reached AL_Gamja; continue stage unless asked to wait. Activated lever (1655,-55,21), later confirmed powered. Collected blue gem (1664,-49,20). Issued !collectGemAt(1669,-49,15) for any-role emerald; result pending. Re-observe afterward. Last seen Wade (1663.5,-50,19.5), AL_Gamja (1664.7,-50,11.4).
+No task.
+Wade logging into minecraft...
+Wade updating available agents
+Wade logged in!
+Wade updating available agents
+Initializing vision intepreter...
+Wade spawned.

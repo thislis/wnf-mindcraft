@@ -133,6 +133,7 @@ public final class StageManager {
     }
 
     public void tick() {
+        roles.syncOnlineRoleTags();
         ticks++;
         StageSession session = active;
         if (session == null) {
@@ -259,6 +260,7 @@ public final class StageManager {
     }
 
     public void onJoin(Player player) {
+        roles.syncRoleTags(player);
         if (roles.roleOf(player).isEmpty()) return;
         StageSession session = active;
         if (session != null && session.state() == SessionState.RUNNING) {

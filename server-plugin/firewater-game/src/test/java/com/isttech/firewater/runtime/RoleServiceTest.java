@@ -6,13 +6,14 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
 import java.util.Map;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class RoleServiceTest {
     @Test
     void assignmentReplacesBotAndClearRestoresIt() {
-        RoleService roles = new RoleService("Wade", "Ember");
+        RoleService roles = new RoleService("Wade", "Ember", List::of);
         roles.assign(Role.WADE, "Builder");
         assertEquals(Role.WADE, roles.roleOf("builder").orElseThrow());
         assertTrue(roles.roleOf("Wade").isEmpty());
@@ -26,7 +27,7 @@ class RoleServiceTest {
 
     @Test
     void invalidAssignmentsLeavePreviousAssignmentsIntact() {
-        RoleService roles = new RoleService("Wade", "Ember");
+        RoleService roles = new RoleService("Wade", "Ember", List::of);
         roles.assign(Role.WADE, "Builder");
         assertThrows(IllegalArgumentException.class, () -> roles.assign(Role.EMBER, "builder"));
         assertThrows(IllegalArgumentException.class, () -> roles.assign(Role.WADE, "bad name"));
@@ -39,7 +40,7 @@ class RoleServiceTest {
 
     @Test
     void savedAssignmentsLoadAtomicallyEvenWhenTheyUseOtherDefaultNames() {
-        RoleService roles = new RoleService("Wade", "Ember");
+        RoleService roles = new RoleService("Wade", "Ember", List::of);
         roles.loadAssignments(Map.of(Role.WADE, "Ember", Role.EMBER, "Wade"));
         assertEquals(Role.WADE, roles.roleOf("Ember").orElseThrow());
         assertEquals(Role.EMBER, roles.roleOf("Wade").orElseThrow());
@@ -50,7 +51,7 @@ class RoleServiceTest {
 
     @Test
     void manualPlayersAreNeverModifiedByBaselineOrIdleCleanup() {
-        RoleService roles = new RoleService("Wade", "Ember");
+        RoleService roles = new RoleService("Wade", "Ember", List::of);
         // Also support explicitly opting the usual bot name into manual mode.
         roles.assign(Role.WADE, "Wade");
         Player player = (Player) Proxy.newProxyInstance(Player.class.getClassLoader(), new Class<?>[]{Player.class},
