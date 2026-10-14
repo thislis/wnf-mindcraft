@@ -12,15 +12,24 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 public final class RoleService {
+    private final Supplier<? extends Collection<? extends Player>> onlinePlayers;
     private final Map<Role, String> names = new EnumMap<>(Role.class);
     private final Map<Role, String> manualNames = new EnumMap<>(Role.class);
 
     public RoleService(String wadeName, String emberName) {
+        this(wadeName, emberName, Bukkit::getOnlinePlayers);
+    }
+
+    RoleService(String wadeName, String emberName,
+                Supplier<? extends Collection<? extends Player>> onlinePlayers) {
+        this.onlinePlayers = onlinePlayers;
         String validatedWadeName = validateName(wadeName);
         String validatedEmberName = validateName(emberName);
         if (validatedWadeName.equalsIgnoreCase(validatedEmberName)) {
@@ -66,17 +75,20 @@ public final class RoleService {
         }
         manualNames.clear();
         manualNames.putAll(validated);
+        syncOnlineRoleTags();
     }
 
     public void assign(Role role, String playerName) {
         String validated = validateName(playerName);
         validateDistinct(role, validated);
         manualNames.put(role, validated);
+        syncOnlineRoleTags();
     }
 
     public void clearAssignment(Role role) {
         validateDistinct(role, names.get(role));
         manualNames.remove(role);
+        syncOnlineRoleTags();
     }
 
     private void validateDistinct(Role role, String playerName) {
@@ -87,14 +99,41 @@ public final class RoleService {
         }
     }
 
+    /** Project the configured roles onto datapack tags; position never determines a role. */
+    public void syncRoleTags(Player player) {
+        Role assigned = roleOf(player).orElse(null);
+        for (Role role : Role.values()) {
+            String tag = "fw_" + role.key();
+            boolean present = player.getScoreboardTags().contains(tag);
+            if (role == assigned) {
+                if (!present) player.addScoreboardTag(tag);
+            } else if (present) {
+                player.removeScoreboardTag(tag);
+            }
+        }
+    }
+
+    public void syncOnlineRoleTags() {
+        for (Player player : onlinePlayers.get()) syncRoleTags(player);
+    }
+
+    public void clearRoleTags(Player player) {
+        for (Role role : Role.values()) player.removeScoreboardTag("fw_" + role.key());
+    }
+
+    public void clearOnlineRoleTags() {
+        for (Player player : onlinePlayers.get()) clearRoleTags(player);
+    }
+
     public Player online(Role role) {
-        for (Player player : Bukkit.getOnlinePlayers()) {
+        for (Player player : onlinePlayers.get()) {
             if (player.getName().equalsIgnoreCase(name(role))) return player;
         }
         return null;
     }
 
     public void enterStage(Player player, Role role) {
+        syncRoleTags(player);
         if (isManual(player)) {
             refreshRoleEffects(player, role);
             return;

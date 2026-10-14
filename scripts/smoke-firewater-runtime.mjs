@@ -192,6 +192,15 @@ hazards:
     });
     const command = value => paper.stdin.write(`${value}\n`);
 
+    let tagCheck = 0;
+    const expectRoleTags = async (name, role) => {
+        const marker = `ROLE_TAG_CHECK_${++tagCheck}_OK`;
+        const selector = `@a[name=${name},tag=${role === 'wade' ? '' : '!'}fw_wade,tag=${role === 'ember' ? '' : '!'}fw_ember]`;
+        const passed = waitForLog(new RegExp(marker), `role tags for ${name}: ${role}`, 5_000);
+        command(`execute if entity ${selector} run say ${marker}`);
+        await passed;
+    };
+
     const bots = [];
     const whispers = [];
     try {
@@ -211,6 +220,9 @@ hazards:
 
         bots.push(await Promise.race([connectBot('Wade', port, whispers), timeout(20_000, 'Wade login')]));
         bots.push(await Promise.race([connectBot('Ember', port, whispers), timeout(20_000, 'Ember login')]));
+
+        await expectRoleTags('Wade', 'wade');
+        await expectRoleTags('Ember', 'ember');
 
         const enabled = waitForLog(/Stage smoke enabled=true/, 'stage enable');
         command('fw stage enable smoke true');
@@ -237,6 +249,13 @@ hazards:
         await expectWalls('air', 'stone', 'one remaining pad OR state');
         command('tp Ember 4.5 100 0.5');
         await expectWalls('stone', 'air', 'wall default restoration');
+
+        // A stale/opposite tag must never change the plugin's assigned role.
+        command('tag Wade remove fw_wade');
+        command('tag Wade add fw_ember');
+        await new Promise(resolve => setTimeout(resolve, 150));
+        await expectRoleTags('Wade', 'wade');
+        await expectRoleTags('Ember', 'ember');
 
         // Safe-role matrix: Wade may touch water and Ember may touch lava.
         let hazardCount = (log.match(/event=HAZARD_CONTACT/g) || []).length;
@@ -339,6 +358,8 @@ hazards:
             if (!human.inventory.items().some(item => item.name === 'diamond')) throw new Error(`Human inventory lost: ${label}`);
         };
         await checkHuman('idle');
+        await expectRoleTags('Builder', 'wade');
+        await expectRoleTags('Wade', null);
         command('tp Builder 30.5 100 0.5');
         await waitUntil(() => human.entity.position.x > 30, 'manual idle movement');
         await checkHuman('idle movement');
@@ -385,6 +406,7 @@ hazards:
         command('fill -2 100 6 2 102 10 minecraft:air');
         await manualReset;
         await checkHuman('hazard reset');
+        await expectRoleTags('Builder', 'wade');
 
         humanMessages.length = 0;
         human.chat('/fw role set ember Builder');
@@ -399,6 +421,8 @@ hazards:
         human.chat('/fw role clear wade');
         await waitUntil(() => humanMessages.some(message => message.includes('wade = Wade (dedicated bot)')), 'manual assignment removal');
         await checkHuman('role removal');
+        await expectRoleTags('Builder', null);
+        await expectRoleTags('Wade', 'wade');
         console.log('FIREWATER_MANUAL_ROLE_SMOKE_OK assignment=in-game persistence=config op=preserved mode=preserved inventory=preserved movement=free interaction=chest,break hazard=reset clear=verified');
 
         console.log('FIREWATER_RUNTIME_SMOKE_OK walls=XOR_OR attempts=4 hazards=WATER,LAVA,POISON exits=dual whispers=verified');

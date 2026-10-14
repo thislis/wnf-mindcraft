@@ -20,6 +20,7 @@ import java.util.List;
 
 public final class FirewaterPlugin extends JavaPlugin {
     private StageManager stageManager;
+    private RoleService roles;
 
     @Override
     public void onEnable() {
@@ -27,7 +28,7 @@ public final class FirewaterPlugin extends JavaPlugin {
         ensureExampleStage();
 
         List<String> defaultPoison = getConfig().getStringList("default-poison-materials");
-        RoleService roles = new RoleService(
+        roles = new RoleService(
             getConfig().getString("players.wade", "Wade"),
             getConfig().getString("players.ember", "Ember"));
         java.util.Map<Role, String> manualPlayers = new java.util.EnumMap<>(Role.class);
@@ -81,7 +82,11 @@ public final class FirewaterPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        if (stageManager != null) stageManager.shutdown();
+        try {
+            if (stageManager != null) stageManager.shutdown();
+        } finally {
+            if (roles != null) roles.clearOnlineRoleTags();
+        }
         getLogger().info("FirewaterGame disabled; participant permissions and stage defaults restored.");
     }
 

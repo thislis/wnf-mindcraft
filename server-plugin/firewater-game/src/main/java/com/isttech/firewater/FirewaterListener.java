@@ -121,7 +121,11 @@ public final class FirewaterListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
-        manager.onQuit(event.getPlayer());
+        try {
+            manager.onQuit(event.getPlayer());
+        } finally {
+            roles.clearRoleTags(event.getPlayer());
+        }
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
